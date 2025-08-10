@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "pdf-tools": {
+      "command": "uv",
+      "args": ["run", "--directory", "/home/rpm/claude/mcp-pdf-tools", "mcp-pdf-tools"],
+      "env": {}
+    }
+  }
+}

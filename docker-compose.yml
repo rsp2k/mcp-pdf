@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  mcp-pdf-tools:
+    build: .
+    image: mcp-pdf-tools:latest
+    container_name: mcp-pdf-tools
+    volumes:
+      # Mount a directory for PDF files
+      - ./test_pdfs:/pdfs:ro
+      # Mount temp directory for processing
+      - ./tmp:/tmp/pdf_processing
+    environment:
+      - DEBUG=true
+      - TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+      - PDF_TEMP_DIR=/tmp/pdf_processing
+    stdin_open: true
+    tty: true
+    # For testing, you can override the entrypoint
+    # entrypoint: /bin/bash

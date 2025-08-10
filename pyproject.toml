@@ -1,0 +1,86 @@
+[project]
+name = "mcp-pdf-tools"
+version = "0.1.0"
+description = "FastMCP server for comprehensive PDF processing - text extraction, OCR, table extraction, and more"
+authors = [{name = "RPM", email = "rpm@example.com"}]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+keywords = [
+    "mcp", 
+    "fastmcp", 
+    "pdf", 
+    "ocr", 
+    "text-extraction",
+    "table-extraction",
+    "pdf-processing",
+    "api",
+    "integration"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: General",
+    "Topic :: Office/Business",
+]
+dependencies = [
+    "fastmcp>=0.1.0",
+    "httpx>=0.25.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "PyMuPDF>=1.23.0",
+    "pdfplumber>=0.10.0",
+    "camelot-py[cv]>=0.11.0",
+    "tabula-py>=2.8.0",
+    "pytesseract>=0.3.10",
+    "pdf2image>=1.16.0",
+    "pypdf>=3.17.0",
+    "pandas>=2.0.0",
+    "Pillow>=10.0.0",
+    "markdown>=3.5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/rpm/mcp-pdf-tools"
+Documentation = "https://github.com/rpm/mcp-pdf-tools#readme"
+Repository = "https://github.com/rpm/mcp-pdf-tools.git"
+Issues = "https://github.com/rpm/mcp-pdf-tools/issues"
+
+[project.scripts]
+mcp-pdf-tools = "mcp_pdf_tools.server:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "build>=0.10.0",
+    "twine>=4.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatchling.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/examples", 
+    "README.md",
+    "LICENSE",
+    "MANIFEST.in",
+]
+
+[dependency-groups]
+dev = [
+    "reportlab>=4.4.3",
+]
