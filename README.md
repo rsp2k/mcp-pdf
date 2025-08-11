@@ -214,18 +214,150 @@ result = await extract_images(
 )
 ```
 
+### Advanced Analysis
+
+```python
+# Analyze document health and quality
+result = await analyze_pdf_health(
+    pdf_path="/path/to/document.pdf"
+)
+
+# Classify content type and structure
+result = await classify_content(
+    pdf_path="/path/to/document.pdf"
+)
+
+# Generate content summary
+result = await summarize_content(
+    pdf_path="/path/to/document.pdf",
+    summary_length="medium",  # "short", "medium", "long"
+    pages="1,2,3"  # Specific pages
+)
+
+# Analyze page layout
+result = await analyze_layout(
+    pdf_path="/path/to/document.pdf",
+    pages="1,2,3",
+    include_coordinates=True
+)
+```
+
+### Content Manipulation
+
+```python
+# Extract form data
+result = await extract_form_data(
+    pdf_path="/path/to/form.pdf"
+)
+
+# Split PDF into separate files
+result = await split_pdf(
+    pdf_path="/path/to/document.pdf",
+    split_pages="5,10,15",  # Split after pages 5, 10, 15
+    output_prefix="section"
+)
+
+# Merge multiple PDFs
+result = await merge_pdfs(
+    pdf_paths=["/path/to/doc1.pdf", "/path/to/doc2.pdf"],
+    output_filename="merged_document.pdf"
+)
+
+# Rotate specific pages
+result = await rotate_pages(
+    pdf_path="/path/to/document.pdf",
+    page_rotations={"1": 90, "3": 180}  # Page 1: 90°, Page 3: 180°
+)
+```
+
+### Optimization and Repair
+
+```python
+# Optimize PDF file size
+result = await optimize_pdf(
+    pdf_path="/path/to/large.pdf",
+    optimization_level="balanced",  # "light", "balanced", "aggressive"
+    preserve_quality=True
+)
+
+# Repair corrupted PDF
+result = await repair_pdf(
+    pdf_path="/path/to/corrupted.pdf"
+)
+
+# Compare two PDFs
+result = await compare_pdfs(
+    pdf_path1="/path/to/original.pdf",
+    pdf_path2="/path/to/modified.pdf",
+    comparison_type="all"  # "text", "structure", "metadata", "all"
+)
+```
+
+### Visual Analysis
+
+```python
+# Extract charts and diagrams
+result = await extract_charts(
+    pdf_path="/path/to/report.pdf",
+    pages="2,3,4",
+    min_size=150  # Minimum size for chart detection
+)
+
+# Detect watermarks
+result = await detect_watermarks(
+    pdf_path="/path/to/document.pdf"
+)
+
+# Security analysis
+result = await analyze_pdf_security(
+    pdf_path="/path/to/document.pdf"
+)
+```
+
 ## Available Tools
 
+### Core Processing Tools
 | Tool | Description |
 |------|-------------|
 | `extract_text` | Extract text with multiple methods and layout preservation |
 | `extract_tables` | Extract tables in various formats (JSON, CSV, Markdown) |
 | `ocr_pdf` | Perform OCR on scanned PDFs with preprocessing |
+| `extract_images` | Extract images with filtering options |
+| `pdf_to_markdown` | Convert PDF to clean Markdown format |
+
+### Document Analysis Tools  
+| Tool | Description |
+|------|-------------|
 | `is_scanned_pdf` | Check if a PDF is scanned or text-based |
 | `get_document_structure` | Extract document structure, outline, and basic metadata |
 | `extract_metadata` | Extract comprehensive metadata and file statistics |
-| `pdf_to_markdown` | Convert PDF to clean Markdown format |
-| `extract_images` | Extract images with filtering options |
+| `analyze_pdf_health` | Comprehensive PDF health and quality analysis |
+| `analyze_pdf_security` | Analyze PDF security features and potential issues |
+| `classify_content` | Classify and analyze PDF content type and structure |
+| `summarize_content` | Generate summary and key insights from PDF content |
+
+### Layout and Visual Analysis Tools
+| Tool | Description |
+|------|-------------|
+| `analyze_layout` | Analyze PDF page layout including text blocks, columns, and spacing |
+| `extract_charts` | Extract and analyze charts, diagrams, and visual elements |
+| `detect_watermarks` | Detect and analyze watermarks in PDF |
+
+### Content Manipulation Tools
+| Tool | Description |
+|------|-------------|
+| `extract_form_data` | Extract form fields and their values from PDF forms |
+| `split_pdf` | Split PDF into multiple files at specified pages |
+| `merge_pdfs` | Merge multiple PDFs into a single file |
+| `rotate_pages` | Rotate specific pages by 90, 180, or 270 degrees |
+
+### Utility and Optimization Tools
+| Tool | Description |
+|------|-------------|
+| `compare_pdfs` | Compare two PDFs for differences in text, structure, and metadata |
+| `convert_to_images` | Convert PDF pages to image files |
+| `optimize_pdf` | Optimize PDF file size and performance |
+| `repair_pdf` | Attempt to repair corrupted or damaged PDF files |
 
 ## Development
 
