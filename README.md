@@ -10,7 +10,30 @@ A comprehensive FastMCP server for PDF processing operations. This server provid
 - **Document Analysis**: Extract structure, metadata, and check if PDFs are scanned
 - **Image Extraction**: Extract images with size filtering
 - **Format Conversion**: Convert PDFs to clean Markdown format
+- **URL Support**: Process PDFs directly from HTTPS URLs with intelligent caching
 - **Smart Detection**: Automatically detect the best method for each operation
+
+## URL Support
+
+All tools support processing PDFs directly from HTTPS URLs:
+
+```bash
+# Extract text from URL
+mcp_pdf_tools extract_text "https://example.com/document.pdf"
+
+# Extract tables from URL  
+mcp_pdf_tools extract_tables "https://example.com/report.pdf"
+
+# Convert URL PDF to markdown
+mcp_pdf_tools pdf_to_markdown "https://example.com/paper.pdf"
+```
+
+**Features:**
+- **Intelligent caching**: Downloaded PDFs are cached for 1 hour to avoid repeated downloads
+- **Content validation**: Verifies content is actually a PDF file (checks magic bytes and content-type)
+- **Security**: HTTPS URLs recommended (HTTP URLs show security warnings)
+- **Proper headers**: Sends appropriate User-Agent for better server compatibility
+- **Error handling**: Clear error messages for network issues or invalid content
 
 ## Installation
 

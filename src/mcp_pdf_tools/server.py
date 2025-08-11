@@ -6,10 +6,14 @@ import os
 import asyncio
 import tempfile
 import base64
+import hashlib
+import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 import logging
+import ast
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -55,8 +59,85 @@ class OCRConfig(BaseModel):
     dpi: int = Field(default=300, description="DPI for image conversion")
 
 # Utility functions
+# URL download cache directory
+CACHE_DIR = Path(os.environ.get("PDF_TEMP_DIR", "/tmp/mcp-pdf-processing"))
+CACHE_DIR.mkdir(exist_ok=True, parents=True)
+
+def parse_pages_parameter(pages: Union[str, List[int], None]) -> Optional[List[int]]:
+    """Parse pages parameter that might come as string or list"""
+    if pages is None:
+        return None
+    
+    if isinstance(pages, list):
+        return [int(p) for p in pages]
+    
+    if isinstance(pages, str):
+        try:
+            # Handle string representations like "[1, 2, 3]" or "1,2,3"
+            if pages.strip().startswith('[') and pages.strip().endswith(']'):
+                return ast.literal_eval(pages.strip())
+            elif ',' in pages:
+                return [int(p.strip()) for p in pages.split(',')]
+            else:
+                return [int(pages.strip())]
+        except (ValueError, SyntaxError) as e:
+            raise ValueError(f"Invalid pages format: {pages}. Use format like [1,2,3] or 1,2,3")
+    
+    return None
+
+async def download_pdf_from_url(url: str) -> Path:
+    """Download PDF from URL with caching"""
+    try:
+        # Create cache filename based on URL hash
+        url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
+        cache_file = CACHE_DIR / f"cached_{url_hash}.pdf"
+        
+        # Check if cached file exists and is recent (1 hour)
+        if cache_file.exists():
+            file_age = time.time() - cache_file.stat().st_mtime
+            if file_age < 3600:  # 1 hour cache
+                logger.info(f"Using cached PDF: {cache_file}")
+                return cache_file
+        
+        logger.info(f"Downloading PDF from: {url}")
+        
+        headers = {
+            "User-Agent": "MCP-PDF-Tools/1.0 (PDF processing server; +https://github.com/fastmcp/mcp-pdf-tools)"
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            
+            # Check content type
+            content_type = response.headers.get("content-type", "").lower()
+            if "pdf" not in content_type and "application/pdf" not in content_type:
+                # Check if content looks like PDF by magic bytes
+                content_start = response.content[:10]
+                if not content_start.startswith(b"%PDF"):
+                    raise ValueError(f"URL does not contain a PDF file. Content-Type: {content_type}")
+            
+            # Save to cache
+            cache_file.write_bytes(response.content)
+            logger.info(f"Downloaded and cached PDF: {cache_file} ({len(response.content)} bytes)")
+            return cache_file
+            
+    except httpx.HTTPError as e:
+        raise ValueError(f"Failed to download PDF from URL {url}: {str(e)}")
+    except Exception as e:
+        raise ValueError(f"Error downloading PDF: {str(e)}")
+
 async def validate_pdf_path(pdf_path: str) -> Path:
-    """Validate that the path exists and is a PDF file"""
+    """Validate path (local or URL) and return local Path to PDF file"""
+    # Check if it's a URL
+    parsed = urlparse(pdf_path)
+    
+    if parsed.scheme in ('http', 'https'):
+        if parsed.scheme == 'http':
+            logger.warning(f"Using insecure HTTP URL: {pdf_path}")
+        return await download_pdf_from_url(pdf_path)
+    
+    # Handle local path
     path = Path(pdf_path)
     if not path.exists():
         raise ValueError(f"File not found: {pdf_path}")
@@ -126,20 +207,23 @@ async def extract_with_pypdf(pdf_path: Path, pages: Optional[List[int]] = None, 
     return "\n\n".join(text_parts)
 
 # Main text extraction tool
-@mcp.tool(name="extract_text", description="Extract text from PDF with intelligent method selection")
+@mcp.tool(
+    name="extract_text", 
+    description="Extract text from PDF with intelligent method selection"
+)
 async def extract_text(
     pdf_path: str,
-    method: str = "auto",
-    pages: Optional[List[int]] = None,
+    method: str = "auto", 
+    pages: Optional[str] = None,  # Accept as string for MCP compatibility
     preserve_layout: bool = False
 ) -> Dict[str, Any]:
     """
     Extract text from PDF using various methods
     
     Args:
-        pdf_path: Path to the PDF file
+        pdf_path: Path to PDF file or HTTPS URL
         method: Extraction method (auto, pymupdf, pdfplumber, pypdf)
-        pages: List of page numbers to extract (0-indexed), None for all pages
+        pages: Page numbers to extract as string like "1,2,3" or "[1,2,3]", None for all pages (0-indexed)
         preserve_layout: Whether to preserve the original text layout
     
     Returns:
@@ -150,6 +234,7 @@ async def extract_text(
     
     try:
         path = await validate_pdf_path(pdf_path)
+        parsed_pages = parse_pages_parameter(pages)
         
         # Auto-select method based on PDF characteristics
         if method == "auto":
@@ -163,11 +248,11 @@ async def extract_text(
         
         # Extract text using selected method
         if method == "pymupdf":
-            text = await extract_with_pymupdf(path, pages, preserve_layout)
+            text = await extract_with_pymupdf(path, parsed_pages, preserve_layout)
         elif method == "pdfplumber":
-            text = await extract_with_pdfplumber(path, pages, preserve_layout)
+            text = await extract_with_pdfplumber(path, parsed_pages, preserve_layout)
         elif method == "pypdf":
-            text = await extract_with_pypdf(path, pages, preserve_layout)
+            text = await extract_with_pypdf(path, parsed_pages, preserve_layout)
         else:
             raise ValueError(f"Unknown extraction method: {method}")
         
@@ -248,7 +333,7 @@ async def extract_tables_pdfplumber(pdf_path: Path, pages: Optional[List[int]] =
 @mcp.tool(name="extract_tables", description="Extract tables from PDF with automatic method selection")
 async def extract_tables(
     pdf_path: str,
-    pages: Optional[List[int]] = None,
+    pages: Optional[str] = None,  # Accept as string for MCP compatibility
     method: str = "auto",
     output_format: str = "json"
 ) -> Dict[str, Any]:
@@ -256,7 +341,7 @@ async def extract_tables(
     Extract tables from PDF using various methods
     
     Args:
-        pdf_path: Path to the PDF file
+        pdf_path: Path to PDF file or HTTPS URL
         pages: List of page numbers to extract tables from (0-indexed)
         method: Extraction method (auto, camelot, tabula, pdfplumber)
         output_format: Output format (json, csv, markdown)
@@ -269,6 +354,7 @@ async def extract_tables(
     
     try:
         path = await validate_pdf_path(pdf_path)
+        parsed_pages = parse_pages_parameter(pages)
         all_tables = []
         methods_tried = []
         
@@ -278,11 +364,11 @@ async def extract_tables(
                 methods_tried.append(try_method)
                 
                 if try_method == "camelot":
-                    tables = await extract_tables_camelot(path, pages)
+                    tables = await extract_tables_camelot(path, parsed_pages)
                 elif try_method == "pdfplumber":
-                    tables = await extract_tables_pdfplumber(path, pages)
+                    tables = await extract_tables_pdfplumber(path, parsed_pages)
                 elif try_method == "tabula":
-                    tables = await extract_tables_tabula(path, pages)
+                    tables = await extract_tables_tabula(path, parsed_pages)
                 
                 if tables:
                     method = try_method
@@ -292,11 +378,11 @@ async def extract_tables(
             # Use specific method
             methods_tried.append(method)
             if method == "camelot":
-                all_tables = await extract_tables_camelot(path, pages)
+                all_tables = await extract_tables_camelot(path, parsed_pages)
             elif method == "pdfplumber":
-                all_tables = await extract_tables_pdfplumber(path, pages)
+                all_tables = await extract_tables_pdfplumber(path, parsed_pages)
             elif method == "tabula":
-                all_tables = await extract_tables_tabula(path, pages)
+                all_tables = await extract_tables_tabula(path, parsed_pages)
             else:
                 raise ValueError(f"Unknown table extraction method: {method}")
         
@@ -345,13 +431,13 @@ async def ocr_pdf(
     languages: List[str] = ["eng"],
     preprocess: bool = True,
     dpi: int = 300,
-    pages: Optional[List[int]] = None
+    pages: Optional[str] = None  # Accept as string for MCP compatibility
 ) -> Dict[str, Any]:
     """
     Perform OCR on a scanned PDF
     
     Args:
-        pdf_path: Path to the PDF file
+        pdf_path: Path to PDF file or HTTPS URL
         languages: List of language codes for OCR (e.g., ["eng", "fra"])
         preprocess: Whether to preprocess images for better OCR
         dpi: DPI for PDF to image conversion
@@ -365,12 +451,13 @@ async def ocr_pdf(
     
     try:
         path = await validate_pdf_path(pdf_path)
+        parsed_pages = parse_pages_parameter(pages)
         
         # Convert PDF pages to images
         with tempfile.TemporaryDirectory() as temp_dir:
-            if pages:
+            if parsed_pages:
                 images = []
-                for page_num in pages:
+                for page_num in parsed_pages:
                     page_images = convert_from_path(
                         str(path), 
                         dpi=dpi, 
@@ -461,7 +548,7 @@ async def get_document_structure(pdf_path: str) -> Dict[str, Any]:
     Extract document structure including headers, sections, and metadata
     
     Args:
-        pdf_path: Path to the PDF file
+        pdf_path: Path to PDF file or HTTPS URL
     
     Returns:
         Dictionary containing document structure information
@@ -532,13 +619,13 @@ async def pdf_to_markdown(
     pdf_path: str,
     include_images: bool = True,
     include_metadata: bool = True,
-    pages: Optional[List[int]] = None
+    pages: Optional[str] = None  # Accept as string for MCP compatibility
 ) -> Dict[str, Any]:
     """
     Convert PDF to markdown format
     
     Args:
-        pdf_path: Path to the PDF file
+        pdf_path: Path to PDF file or HTTPS URL
         include_images: Whether to extract and include images
         include_metadata: Whether to include document metadata
         pages: Specific pages to convert (0-indexed)
@@ -551,6 +638,7 @@ async def pdf_to_markdown(
     
     try:
         path = await validate_pdf_path(pdf_path)
+        parsed_pages = parse_pages_parameter(pages)
         doc = fitz.open(str(path))
         
         markdown_parts = []
@@ -575,7 +663,7 @@ async def pdf_to_markdown(
             markdown_parts.append("\n---\n")
         
         # Process pages
-        page_range = pages if pages else range(len(doc))
+        page_range = parsed_pages if parsed_pages else range(len(doc))
         images_extracted = []
         
         for page_num in page_range:
@@ -638,7 +726,7 @@ async def pdf_to_markdown(
 @mcp.tool(name="extract_images", description="Extract images from PDF")
 async def extract_images(
     pdf_path: str,
-    pages: Optional[List[int]] = None,
+    pages: Optional[str] = None,  # Accept as string for MCP compatibility
     min_width: int = 100,
     min_height: int = 100,
     output_format: str = "png"
@@ -647,7 +735,7 @@ async def extract_images(
     Extract images from PDF
     
     Args:
-        pdf_path: Path to the PDF file
+        pdf_path: Path to PDF file or HTTPS URL
         pages: Specific pages to extract images from (0-indexed)
         min_width: Minimum image width to extract
         min_height: Minimum image height to extract
@@ -658,10 +746,11 @@ async def extract_images(
     """
     try:
         path = await validate_pdf_path(pdf_path)
+        parsed_pages = parse_pages_parameter(pages)
         doc = fitz.open(str(path))
         
         images = []
-        page_range = pages if pages else range(len(doc))
+        page_range = parsed_pages if parsed_pages else range(len(doc))
         
         for page_num in page_range:
             page = doc[page_num]
@@ -714,7 +803,7 @@ async def extract_metadata(pdf_path: str) -> Dict[str, Any]:
     Extract comprehensive metadata from PDF
     
     Args:
-        pdf_path: Path to the PDF file
+        pdf_path: Path to PDF file or HTTPS URL
     
     Returns:
         Dictionary containing all available metadata
