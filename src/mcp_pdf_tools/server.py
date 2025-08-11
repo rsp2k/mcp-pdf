@@ -63,24 +63,32 @@ CACHE_DIR = Path(os.environ.get("PDF_TEMP_DIR", "/tmp/mcp-pdf-processing"))
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
 
 def parse_pages_parameter(pages: Union[str, List[int], None]) -> Optional[List[int]]:
-    """Parse pages parameter that might come as string or list"""
+    """
+    Parse pages parameter from various formats into a list of 0-based integers.
+    User input is 1-based (page 1 = first page), converted to 0-based internally.
+    """
     if pages is None:
         return None
     
     if isinstance(pages, list):
-        return [int(p) for p in pages]
+        # Convert 1-based user input to 0-based internal representation
+        return [max(0, int(p) - 1) for p in pages]
     
     if isinstance(pages, str):
         try:
             # Handle string representations like "[1, 2, 3]" or "1,2,3"
             if pages.strip().startswith('[') and pages.strip().endswith(']'):
-                return ast.literal_eval(pages.strip())
+                page_list = ast.literal_eval(pages.strip())
             elif ',' in pages:
-                return [int(p.strip()) for p in pages.split(',')]
+                page_list = [int(p.strip()) for p in pages.split(',')]
             else:
-                return [int(pages.strip())]
+                page_list = [int(pages.strip())]
+            
+            # Convert 1-based user input to 0-based internal representation
+            return [max(0, int(p) - 1) for p in page_list]
+            
         except (ValueError, SyntaxError):
-            raise ValueError(f"Invalid pages format: {pages}. Use format like [1,2,3] or 1,2,3")
+            raise ValueError(f"Invalid pages format: {pages}. Use 1-based page numbers like [1,2,3] or 1,2,3")
     
     return None
 
@@ -1282,22 +1290,25 @@ async def split_pdf(
         path = await validate_pdf_path(pdf_path)
         doc = fitz.open(str(path))
         
-        # Parse split points
+        # Parse split points (convert from 1-based user input to 0-based internal)
         if isinstance(split_points, str):
             try:
                 if ',' in split_points:
-                    split_list = [int(p.strip()) for p in split_points.split(',')]
+                    user_split_list = [int(p.strip()) for p in split_points.split(',')]
                 else:
-                    split_list = [int(split_points.strip())]
+                    user_split_list = [int(split_points.strip())]
+                # Convert to 0-based for internal processing
+                split_list = [max(0, p - 1) for p in user_split_list]
             except ValueError:
-                return {"error": f"Invalid split points format: {split_points}. Use comma-separated numbers like '2,5,8'"}
+                return {"error": f"Invalid split points format: {split_points}. Use 1-based page numbers like '2,5,8'"}
         else:
-            split_list = split_points
+            # Assume it's already parsed list, convert from 1-based to 0-based
+            split_list = [max(0, p - 1) for p in split_points]
         
-        # Sort and validate split points
+        # Sort and validate split points (now 0-based)
         split_list = sorted(set(split_list))
         page_count = len(doc)
-        split_list = [p for p in split_list if 0 < p < page_count]  # Remove invalid pages
+        split_list = [p for p in split_list if 0 <= p < page_count]  # Remove invalid pages
         
         if not split_list:
             return {"error": "No valid split points provided"}
@@ -1341,7 +1352,7 @@ async def split_pdf(
         return {
             "original_file": str(path),
             "original_page_count": page_count,
-            "split_points": split_list,
+            "split_points": [p + 1 for p in split_list],  # Convert back to 1-based for display
             "output_files": output_files,
             "total_parts": len(output_files),
             "split_time": round(time.time() - start_time, 2)
@@ -1438,7 +1449,7 @@ async def rotate_pages(
     
     Args:
         pdf_path: Path to PDF file or HTTPS URL
-        pages: Page numbers to rotate (comma-separated), None for all pages
+        pages: Page numbers to rotate (comma-separated, 1-based), None for all pages
         rotation: Rotation angle (90, 180, or 270 degrees)
         output_filename: Name for the output file
     
@@ -1509,7 +1520,7 @@ async def convert_to_images(
         pdf_path: Path to PDF file or HTTPS URL
         format: Output image format (png, jpeg, tiff)
         dpi: Resolution for image conversion
-        pages: Page numbers to convert (comma-separated), None for all pages
+        pages: Page numbers to convert (comma-separated, 1-based), None for all pages
         output_prefix: Prefix for output image files
     
     Returns:
@@ -2040,7 +2051,7 @@ async def summarize_content(
     Args:
         pdf_path: Path to PDF file or HTTPS URL
         summary_length: Length of summary (short, medium, long)
-        pages: Specific pages to summarize (comma-separated), None for all pages
+        pages: Specific pages to summarize (comma-separated, 1-based), None for all pages
     
     Returns:
         Dictionary containing summary and key insights
@@ -2220,7 +2231,7 @@ async def analyze_layout(
     
     Args:
         pdf_path: Path to PDF file or HTTPS URL
-        pages: Specific pages to analyze (comma-separated), None for all pages
+        pages: Specific pages to analyze (comma-separated, 1-based), None for all pages
         include_coordinates: Whether to include detailed coordinate information
     
     Returns:
@@ -2428,7 +2439,7 @@ async def extract_charts(
     
     Args:
         pdf_path: Path to PDF file or HTTPS URL
-        pages: Specific pages to analyze (comma-separated), None for all pages
+        pages: Specific pages to analyze (comma-separated, 1-based), None for all pages
         min_size: Minimum size (width or height) for chart detection in pixels
     
     Returns:

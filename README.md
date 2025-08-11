@@ -12,6 +12,7 @@ A comprehensive FastMCP server for PDF processing operations. This server provid
 - **Format Conversion**: Convert PDFs to clean Markdown format
 - **URL Support**: Process PDFs directly from HTTPS URLs with intelligent caching
 - **Smart Detection**: Automatically detect the best method for each operation
+- **User-Friendly**: All page numbers use 1-based indexing (page 1 = first page)
 
 ## URL Support
 
@@ -133,7 +134,7 @@ result = await extract_text(
 # Extract specific pages with layout preservation
 result = await extract_text(
     pdf_path="/path/to/document.pdf",
-    pages=[0, 1, 2],  # First 3 pages
+    pages=[1, 2, 3],  # First 3 pages (1-based numbering)
     preserve_layout=True,
     method="pdfplumber"  # Or "auto", "pymupdf", "pypdf"
 )
@@ -150,7 +151,7 @@ result = await extract_tables(
 # Extract tables from specific pages in markdown format
 result = await extract_tables(
     pdf_path="/path/to/document.pdf",
-    pages=[2, 3],
+    pages=[2, 3],  # Pages 2 and 3 (1-based numbering)
     output_format="markdown"  # Or "json", "csv"
 )
 ```
@@ -231,13 +232,13 @@ result = await classify_content(
 result = await summarize_content(
     pdf_path="/path/to/document.pdf",
     summary_length="medium",  # "short", "medium", "long"
-    pages="1,2,3"  # Specific pages
+    pages="1,2,3"  # Specific pages (1-based numbering)
 )
 
 # Analyze page layout
 result = await analyze_layout(
     pdf_path="/path/to/document.pdf",
-    pages="1,2,3",
+    pages="1,2,3",  # Specific pages (1-based numbering)
     include_coordinates=True
 )
 ```
@@ -250,10 +251,10 @@ result = await extract_form_data(
     pdf_path="/path/to/form.pdf"
 )
 
-# Split PDF into separate files
+# Split PDF into separate files  
 result = await split_pdf(
     pdf_path="/path/to/document.pdf",
-    split_pages="5,10,15",  # Split after pages 5, 10, 15
+    split_pages="5,10,15",  # Split after pages 5, 10, 15 (1-based)
     output_prefix="section"
 )
 
@@ -266,7 +267,7 @@ result = await merge_pdfs(
 # Rotate specific pages
 result = await rotate_pages(
     pdf_path="/path/to/document.pdf",
-    page_rotations={"1": 90, "3": 180}  # Page 1: 90°, Page 3: 180°
+    page_rotations={"1": 90, "3": 180}  # Page 1: 90°, Page 3: 180° (1-based)
 )
 ```
 
@@ -299,7 +300,7 @@ result = await compare_pdfs(
 # Extract charts and diagrams
 result = await extract_charts(
     pdf_path="/path/to/report.pdf",
-    pages="2,3,4",
+    pages="2,3,4",  # Pages 2, 3, 4 (1-based numbering)
     min_size=150  # Minimum size for chart detection
 )
 

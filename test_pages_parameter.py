@@ -13,18 +13,18 @@ sys.path.insert(0, 'src')
 from mcp_pdf_tools.server import parse_pages_parameter
 
 def test_page_parsing():
-    """Test page parameter parsing"""
-    print("Testing page parameter parsing...")
+    """Test page parameter parsing (1-based user input -> 0-based internal)"""
+    print("Testing page parameter parsing (1-based user input -> 0-based internal)...")
     
-    # Test different input formats
+    # Test different input formats - all converted from 1-based user input to 0-based internal
     test_cases = [
         (None, None),
-        ("1,2,3", [1, 2, 3]),
-        ("[2, 3]", [2, 3]),  # This is the problematic case from the user
-        ("5", [5]),
-        ([0, 1, 2], [0, 1, 2]),
-        ("0,1,2", [0, 1, 2]),
-        ("[0,1,2]", [0, 1, 2])
+        ("1,2,3", [0, 1, 2]),  # 1-based input -> 0-based internal
+        ("[2, 3]", [1, 2]),    # This is the problematic case from the user
+        ("5", [4]),            # Page 5 becomes index 4
+        ([1, 2, 3], [0, 1, 2]), # List input also converted
+        ("2,3,4", [1, 2, 3]),   # Pages 2,3,4 -> indexes 1,2,3
+        ("[1,2,3]", [0, 1, 2])  # Another format
     ]
     
     all_passed = True
