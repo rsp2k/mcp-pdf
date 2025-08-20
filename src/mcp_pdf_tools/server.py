@@ -38,6 +38,43 @@ logger = logging.getLogger(__name__)
 # Initialize FastMCP server
 mcp = FastMCP("pdf-tools")
 
+# URL download cache directory
+CACHE_DIR = Path(os.environ.get("PDF_TEMP_DIR", "/tmp/mcp-pdf-processing"))
+CACHE_DIR.mkdir(exist_ok=True, parents=True)
+
+# Resource for serving extracted images
+@mcp.resource("pdf-image://{image_id}", 
+              description="Extracted PDF image",
+              mime_type="image/png")
+async def get_pdf_image(image_id: str) -> bytes:
+    """
+    Serve extracted PDF images as MCP resources.
+    
+    Args:
+        image_id: Image identifier (filename without extension)
+        
+    Returns:
+        Raw image bytes
+    """
+    try:
+        # Reconstruct the image path from the ID
+        image_path = CACHE_DIR / f"{image_id}.png"
+        
+        # Try .jpeg as well if .png doesn't exist
+        if not image_path.exists():
+            image_path = CACHE_DIR / f"{image_id}.jpeg"
+        
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image not found: {image_id}")
+        
+        # Read and return the image bytes
+        with open(image_path, 'rb') as f:
+            return f.read()
+            
+    except Exception as e:
+        logger.error(f"Failed to serve image {image_id}: {str(e)}")
+        raise
+
 # Configuration models
 class ExtractionConfig(BaseModel):
     """Configuration for text extraction"""
@@ -58,9 +95,6 @@ class OCRConfig(BaseModel):
     dpi: int = Field(default=300, description="DPI for image conversion")
 
 # Utility functions
-# URL download cache directory
-CACHE_DIR = Path(os.environ.get("PDF_TEMP_DIR", "/tmp/mcp-pdf-processing"))
-CACHE_DIR.mkdir(exist_ok=True, parents=True)
 
 def format_file_size(size_bytes: int) -> str:
     """Format file size in human-readable format"""
@@ -635,7 +669,7 @@ async def get_document_structure(pdf_path: str) -> Dict[str, Any]:
         return {"error": f"Failed to extract document structure: {str(e)}"}
 
 # PDF to Markdown conversion
-@mcp.tool(name="pdf_to_markdown", description="Convert PDF to clean markdown format with file-based images (avoids verbose output)")
+@mcp.tool(name="pdf_to_markdown", description="Convert PDF to markdown with MCP resource URIs for images")
 async def pdf_to_markdown(
     pdf_path: str,
     include_images: bool = True,
@@ -643,16 +677,16 @@ async def pdf_to_markdown(
     pages: Optional[str] = None  # Accept as string for MCP compatibility
 ) -> Dict[str, Any]:
     """
-    Convert PDF to markdown format with file-based images
+    Convert PDF to markdown format with MCP resource image links
     
     Args:
         pdf_path: Path to PDF file or HTTPS URL
-        include_images: Whether to extract and include images (saves to files, no base64)
+        include_images: Whether to extract and include images as MCP resources
         include_metadata: Whether to include document metadata
         pages: Specific pages to convert (1-based user input, converted to 0-based)
     
     Returns:
-        Dictionary containing markdown content with image file paths (no base64 data)
+        Dictionary containing markdown content with MCP resource URIs for images
     """
     import time
     start_time = time.time()
@@ -720,18 +754,24 @@ async def pdf_to_markdown(
                         pix.save(str(img_path))
                         
                         file_size = img_path.stat().st_size
+                        
+                        # Create resource URI (filename without extension)
+                        image_id = img_filename.rsplit('.', 1)[0]  # Remove extension
+                        resource_uri = f"pdf-image://{image_id}"
+                        
                         images_extracted.append({
                             "page": page_num + 1,
                             "index": img_index,
                             "file_path": str(img_path),
                             "filename": img_filename,
+                            "resource_uri": resource_uri,
                             "width": pix.width,
                             "height": pix.height,
                             "size_bytes": file_size,
                             "size_human": format_file_size(file_size)
                         })
-                        # Reference the saved file in markdown
-                        markdown_parts.append(f"\n![Image {page_num+1}-{img_index}]({img_path})\n")
+                        # Reference the resource URI in markdown
+                        markdown_parts.append(f"\n![Image {page_num+1}-{img_index}]({resource_uri})\n")
                     pix = None
         
         doc.close()
@@ -752,7 +792,7 @@ async def pdf_to_markdown(
         return {"error": f"Conversion failed: {str(e)}"}
 
 # Image extraction
-@mcp.tool(name="extract_images", description="Extract images from PDF and save to files (avoids verbose base64 output)")
+@mcp.tool(name="extract_images", description="Extract images from PDF with MCP resource URIs for direct access")
 async def extract_images(
     pdf_path: str,
     pages: Optional[str] = None,  # Accept as string for MCP compatibility
@@ -761,7 +801,7 @@ async def extract_images(
     output_format: str = "png"
 ) -> Dict[str, Any]:
     """
-    Extract images from PDF and save to files
+    Extract images from PDF with MCP resource access
     
     Args:
         pdf_path: Path to PDF file or HTTPS URL
@@ -771,7 +811,7 @@ async def extract_images(
         output_format: Output format (png, jpeg)
     
     Returns:
-        Dictionary containing image file paths and metadata (no base64 data to avoid verbose output)
+        Dictionary containing image metadata and MCP resource URIs for direct access
     """
     try:
         path = await validate_pdf_path(pdf_path)
@@ -803,11 +843,16 @@ async def extract_images(
                         # Calculate file size
                         file_size = img_path.stat().st_size
                         
+                        # Create resource URI (filename without extension)
+                        image_id = img_filename.rsplit('.', 1)[0]  # Remove extension
+                        resource_uri = f"pdf-image://{image_id}"
+                        
                         images.append({
                             "page": page_num + 1,
                             "index": img_index,
                             "file_path": str(img_path),
                             "filename": img_filename,
+                            "resource_uri": resource_uri,
                             "width": pix.width,
                             "height": pix.height,
                             "format": output_format,
