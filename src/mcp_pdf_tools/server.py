@@ -792,16 +792,17 @@ async def pdf_to_markdown(
         return {"error": f"Conversion failed: {str(e)}"}
 
 # Image extraction
-@mcp.tool(name="extract_images", description="Extract images from PDF with MCP resource URIs for direct access")
+@mcp.tool(name="extract_images", description="Extract images from PDF with custom output path and clean summary")
 async def extract_images(
     pdf_path: str,
     pages: Optional[str] = None,  # Accept as string for MCP compatibility
     min_width: int = 100,
     min_height: int = 100,
-    output_format: str = "png"
+    output_format: str = "png",
+    output_directory: Optional[str] = None  # Custom output directory
 ) -> Dict[str, Any]:
     """
-    Extract images from PDF with MCP resource access
+    Extract images from PDF with custom output directory and summary results
     
     Args:
         pdf_path: Path to PDF file or HTTPS URL
@@ -809,16 +810,25 @@ async def extract_images(
         min_width: Minimum image width to extract
         min_height: Minimum image height to extract
         output_format: Output format (png, jpeg)
+        output_directory: Custom directory to save images (defaults to cache directory)
     
     Returns:
-        Dictionary containing image metadata and MCP resource URIs for direct access
+        Summary of extraction results with file locations (no verbose metadata)
     """
     try:
         path = await validate_pdf_path(pdf_path)
         parsed_pages = parse_pages_parameter(pages)
         doc = fitz.open(str(path))
         
-        images = []
+        # Determine output directory
+        if output_directory:
+            output_dir = Path(output_directory)
+            output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            output_dir = CACHE_DIR
+        
+        extracted_files = []
+        total_size = 0
         page_range = parsed_pages if parsed_pages else range(len(doc))
         
         for page_num in page_range:
@@ -835,43 +845,36 @@ async def extract_images(
                         if output_format == "jpeg" and pix.alpha:
                             pix = fitz.Pixmap(fitz.csRGB, pix)
                         
-                        # Save image to file instead of embedding base64 data
+                        # Save image to specified directory
                         img_filename = f"page_{page_num + 1}_image_{img_index}.{output_format}"
-                        img_path = CACHE_DIR / img_filename
+                        img_path = output_dir / img_filename
                         pix.save(str(img_path))
                         
                         # Calculate file size
                         file_size = img_path.stat().st_size
+                        total_size += file_size
                         
-                        # Create resource URI (filename without extension)
-                        image_id = img_filename.rsplit('.', 1)[0]  # Remove extension
-                        resource_uri = f"pdf-image://{image_id}"
-                        
-                        images.append({
-                            "page": page_num + 1,
-                            "index": img_index,
-                            "file_path": str(img_path),
+                        # Add to extracted files list (summary format)
+                        extracted_files.append({
                             "filename": img_filename,
-                            "resource_uri": resource_uri,
-                            "width": pix.width,
-                            "height": pix.height,
-                            "format": output_format,
-                            "size_bytes": file_size,
-                            "size_human": format_file_size(file_size)
+                            "path": str(img_path),
+                            "size": format_file_size(file_size),
+                            "dimensions": f"{pix.width}x{pix.height}"
                         })
                 
                 pix = None
         
         doc.close()
         
+        # Return clean summary instead of verbose image metadata
         return {
-            "images": images,
-            "total_images": len(images),
-            "pages_searched": len(page_range),
-            "filters": {
-                "min_width": min_width,
-                "min_height": min_height
-            }
+            "success": True,
+            "images_extracted": len(extracted_files),
+            "total_size": format_file_size(total_size),
+            "output_directory": str(output_dir),
+            "pages_processed": len(page_range),
+            "files": extracted_files,
+            "extraction_summary": f"Extracted {len(extracted_files)} images ({format_file_size(total_size)}) to {output_dir}"
         }
         
     except Exception as e:

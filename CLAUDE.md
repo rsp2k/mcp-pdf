@@ -80,16 +80,16 @@ uv publish
 3. **OCR Processing**: `ocr_pdf` - Tesseract with preprocessing options
 4. **Document Analysis**: `is_scanned_pdf`, `get_document_structure`, `extract_metadata`
 5. **Format Conversion**: `pdf_to_markdown` - Clean markdown with MCP resource URIs for images
-6. **Image Processing**: `extract_images` - Extract images with MCP resource URIs for direct client access
+6. **Image Processing**: `extract_images` - Extract images with custom output paths and clean summary output
 
 ### MCP Client-Friendly Design
 
 **Optimized for MCP Context Management:**
-- **Image Processing**: `extract_images` and `pdf_to_markdown` return MCP resource URIs for direct image access
-- **Resource URIs**: Images accessible via `pdf-image://{image_id}` protocol for seamless client integration  
-- **Prevents Context Overflow**: Avoids verbose base64 output that fills client message windows
-- **File-Based Storage**: Images saved to cache with metadata including file paths and human-readable sizes
-- **Direct Access**: MCP clients can fetch images directly using resource URIs
+- **Custom Output Paths**: `extract_images` allows users to specify where images are saved
+- **Clean Summary Output**: Returns concise extraction summary instead of verbose image metadata
+- **Resource URIs**: `pdf_to_markdown` uses `pdf-image://{image_id}` protocol for seamless client integration  
+- **Prevents Context Overflow**: Avoids verbose output that fills client message windows
+- **User Control**: Flexible output directory support with automatic directory creation
 
 ### Intelligent Fallbacks
 
