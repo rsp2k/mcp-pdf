@@ -62,6 +62,20 @@ class OCRConfig(BaseModel):
 CACHE_DIR = Path(os.environ.get("PDF_TEMP_DIR", "/tmp/mcp-pdf-processing"))
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
 
+def format_file_size(size_bytes: int) -> str:
+    """Format file size in human-readable format"""
+    if size_bytes == 0:
+        return "0 B"
+    
+    size_names = ["B", "KB", "MB", "GB", "TB"]
+    i = 0
+    
+    while size_bytes >= 1024 and i < len(size_names) - 1:
+        size_bytes /= 1024.0
+        i += 1
+    
+    return f"{size_bytes:.1f} {size_names[i]}"
+
 def parse_pages_parameter(pages: Union[str, List[int], None]) -> Optional[List[int]]:
     """
     Parse pages parameter from various formats into a list of 0-based integers.
@@ -621,7 +635,7 @@ async def get_document_structure(pdf_path: str) -> Dict[str, Any]:
         return {"error": f"Failed to extract document structure: {str(e)}"}
 
 # PDF to Markdown conversion
-@mcp.tool(name="pdf_to_markdown", description="Convert PDF to clean markdown format")
+@mcp.tool(name="pdf_to_markdown", description="Convert PDF to clean markdown format with file-based images (avoids verbose output)")
 async def pdf_to_markdown(
     pdf_path: str,
     include_images: bool = True,
@@ -629,16 +643,16 @@ async def pdf_to_markdown(
     pages: Optional[str] = None  # Accept as string for MCP compatibility
 ) -> Dict[str, Any]:
     """
-    Convert PDF to markdown format
+    Convert PDF to markdown format with file-based images
     
     Args:
         pdf_path: Path to PDF file or HTTPS URL
-        include_images: Whether to extract and include images
+        include_images: Whether to extract and include images (saves to files, no base64)
         include_metadata: Whether to include document metadata
-        pages: Specific pages to convert (0-indexed)
+        pages: Specific pages to convert (1-based user input, converted to 0-based)
     
     Returns:
-        Dictionary containing markdown content
+        Dictionary containing markdown content with image file paths (no base64 data)
     """
     import time
     start_time = time.time()
@@ -700,16 +714,24 @@ async def pdf_to_markdown(
                     pix = fitz.Pixmap(doc, xref)
                     
                     if pix.n - pix.alpha < 4:  # GRAY or RGB
-                        img_data = pix.tobytes("png")
-                        img_b64 = base64.b64encode(img_data).decode()
+                        # Save image to file instead of embedding base64 data
+                        img_filename = f"markdown_page_{page_num + 1}_image_{img_index}.png"
+                        img_path = CACHE_DIR / img_filename
+                        pix.save(str(img_path))
+                        
+                        file_size = img_path.stat().st_size
                         images_extracted.append({
                             "page": page_num + 1,
                             "index": img_index,
-                            "data": img_b64,
+                            "file_path": str(img_path),
+                            "filename": img_filename,
                             "width": pix.width,
-                            "height": pix.height
+                            "height": pix.height,
+                            "size_bytes": file_size,
+                            "size_human": format_file_size(file_size)
                         })
-                        markdown_parts.append(f"\n![Image {page_num+1}-{img_index}](image-{page_num+1}-{img_index}.png)\n")
+                        # Reference the saved file in markdown
+                        markdown_parts.append(f"\n![Image {page_num+1}-{img_index}]({img_path})\n")
                     pix = None
         
         doc.close()
@@ -730,7 +752,7 @@ async def pdf_to_markdown(
         return {"error": f"Conversion failed: {str(e)}"}
 
 # Image extraction
-@mcp.tool(name="extract_images", description="Extract images from PDF")
+@mcp.tool(name="extract_images", description="Extract images from PDF and save to files (avoids verbose base64 output)")
 async def extract_images(
     pdf_path: str,
     pages: Optional[str] = None,  # Accept as string for MCP compatibility
@@ -739,17 +761,17 @@ async def extract_images(
     output_format: str = "png"
 ) -> Dict[str, Any]:
     """
-    Extract images from PDF
+    Extract images from PDF and save to files
     
     Args:
         pdf_path: Path to PDF file or HTTPS URL
-        pages: Specific pages to extract images from (0-indexed)
+        pages: Specific pages to extract images from (1-based user input, converted to 0-based)
         min_width: Minimum image width to extract
         min_height: Minimum image height to extract
         output_format: Output format (png, jpeg)
     
     Returns:
-        Dictionary containing extracted images
+        Dictionary containing image file paths and metadata (no base64 data to avoid verbose output)
     """
     try:
         path = await validate_pdf_path(pdf_path)
@@ -773,16 +795,24 @@ async def extract_images(
                         if output_format == "jpeg" and pix.alpha:
                             pix = fitz.Pixmap(fitz.csRGB, pix)
                         
-                        img_data = pix.tobytes(output_format)
-                        img_b64 = base64.b64encode(img_data).decode()
+                        # Save image to file instead of embedding base64 data
+                        img_filename = f"page_{page_num + 1}_image_{img_index}.{output_format}"
+                        img_path = CACHE_DIR / img_filename
+                        pix.save(str(img_path))
+                        
+                        # Calculate file size
+                        file_size = img_path.stat().st_size
                         
                         images.append({
                             "page": page_num + 1,
                             "index": img_index,
-                            "data": img_b64,
+                            "file_path": str(img_path),
+                            "filename": img_filename,
                             "width": pix.width,
                             "height": pix.height,
-                            "format": output_format
+                            "format": output_format,
+                            "size_bytes": file_size,
+                            "size_human": format_file_size(file_size)
                         })
                 
                 pix = None

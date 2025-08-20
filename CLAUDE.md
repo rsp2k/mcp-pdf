@@ -79,8 +79,16 @@ uv publish
 2. **Table Extraction**: `extract_tables` - Auto-fallback through Camelot → pdfplumber → Tabula
 3. **OCR Processing**: `ocr_pdf` - Tesseract with preprocessing options
 4. **Document Analysis**: `is_scanned_pdf`, `get_document_structure`, `extract_metadata`
-5. **Format Conversion**: `pdf_to_markdown` - Clean markdown with optional images
-6. **Image Processing**: `extract_images` - Size filtering and format conversion
+5. **Format Conversion**: `pdf_to_markdown` - Clean markdown with file-based images (no verbose base64)
+6. **Image Processing**: `extract_images` - Size filtering and file-based output (avoids context overflow)
+
+### MCP Client-Friendly Design
+
+**Optimized for MCP Context Management:**
+- **Image Processing**: `extract_images` and `pdf_to_markdown` save images to files instead of returning base64 data
+- **Prevents Context Overflow**: Avoids verbose output that can fill client message windows
+- **File-Based Results**: Returns file paths, dimensions, and metadata instead of raw binary data
+- **Human-Readable Sizes**: Includes formatted file sizes (e.g., "1.2 MB") for better user experience
 
 ### Intelligent Fallbacks
 
