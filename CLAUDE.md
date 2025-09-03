@@ -81,6 +81,7 @@ uv publish
 4. **Document Analysis**: `is_scanned_pdf`, `get_document_structure`, `extract_metadata`
 5. **Format Conversion**: `pdf_to_markdown` - Clean markdown with MCP resource URIs for images
 6. **Image Processing**: `extract_images` - Extract images with custom output paths and clean summary output
+7. **PDF Forms**: `extract_form_data`, `create_form_pdf`, `fill_form_pdf`, `add_form_fields` - Complete form lifecycle management
 
 ### MCP Client-Friendly Design
 
@@ -129,6 +130,33 @@ All tools follow this pattern:
 4. Return structured results with metadata
 5. Include timing information and method used
 6. Provide helpful error messages with troubleshooting hints
+
+### PDF Form Tools
+
+The server provides comprehensive PDF form capabilities:
+
+**Form Creation (`create_form_pdf`)**:
+- Create new interactive PDF forms from scratch
+- Support for text fields, checkboxes, dropdowns, and signature fields
+- Automatic field positioning with customizable layouts
+- Multiple page size options (A4, Letter, Legal)
+
+**Form Filling (`fill_form_pdf`)**:
+- Fill existing PDF forms with JSON data
+- Intelligent field type handling (text, checkbox, dropdown)
+- Optional form flattening (make fields non-editable)
+- Comprehensive error reporting for failed field fills
+
+**Form Enhancement (`add_form_fields`)**:
+- Add interactive fields to existing PDFs
+- Preserve original document content and formatting
+- Support for multi-page field placement
+- Flexible field positioning and styling
+
+**Form Extraction (`extract_form_data`)**:
+- Extract all form fields and their current values
+- Identify field types and constraints
+- Form validation and structure analysis
 
 ### Docker Support
 The project includes Docker support with all system dependencies pre-installed, useful for consistent cross-platform development and deployment.

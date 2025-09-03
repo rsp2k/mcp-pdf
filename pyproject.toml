@@ -82,5 +82,7 @@ include = [
 
 [dependency-groups]
 dev = [
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
     "reportlab>=4.4.3",
 ]
