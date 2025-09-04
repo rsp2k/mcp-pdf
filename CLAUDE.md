@@ -82,6 +82,8 @@ uv publish
 5. **Format Conversion**: `pdf_to_markdown` - Clean markdown with MCP resource URIs for images
 6. **Image Processing**: `extract_images` - Extract images with custom output paths and clean summary output
 7. **PDF Forms**: `extract_form_data`, `create_form_pdf`, `fill_form_pdf`, `add_form_fields` - Complete form lifecycle management
+8. **Document Assembly**: `merge_pdfs`, `split_pdf_by_pages`, `reorder_pdf_pages` - PDF manipulation and organization
+9. **Annotations & Markup**: `add_sticky_notes`, `add_highlights`, `add_stamps`, `extract_all_annotations` - Collaboration and review tools
 
 ### MCP Client-Friendly Design
 
@@ -158,8 +160,98 @@ The server provides comprehensive PDF form capabilities:
 - Identify field types and constraints
 - Form validation and structure analysis
 
+### PDF Document Assembly
+
+The server provides comprehensive document organization capabilities:
+
+**PDF Merging (`merge_pdfs`)**:
+- Combine multiple PDFs into single document
+- Preserve bookmarks with automatic page number adjustment
+- Generate table of contents from source filenames
+- Optional page numbering for merged documents
+- Intelligent error handling for problematic files
+
+**Page Range Splitting (`split_pdf_by_pages`)**:
+- Split PDFs by custom page ranges (1-5, 6-10, 11-end)
+- Flexible naming patterns with placeholders
+- Preserve relevant bookmarks in each split
+- Support for single pages and "end" keyword
+
+**Bookmark-Based Splitting (`split_pdf_by_bookmarks`)**:
+- Automatically split at bookmark boundaries
+- Configurable bookmark levels (chapters vs sections)
+- Clean filename generation from bookmark titles
+- Preserve document structure in splits
+
+**Page Reordering (`reorder_pdf_pages`)**:
+- Rearrange pages in any custom sequence
+- Support for page duplication and omission
+- Automatic bookmark reference adjustment
+- Detailed tracking of page transformations
+
 ### Docker Support
 The project includes Docker support with all system dependencies pre-installed, useful for consistent cross-platform development and deployment.
 
 ### MCP Integration
 Tools are registered using FastMCP decorators and follow MCP protocol standards for tool descriptions and parameter validation.
+
+## Future Enhancement Ideas
+
+Based on comprehensive PDF usage patterns, here are potential high-impact features for future development:
+
+### 🎯 Priority 1: Document Assembly & Merging
+- `merge_pdfs` - Combine multiple PDFs with bookmarks preservation
+- `split_pdf_by_pages` - Extract specific page ranges
+- `split_pdf_by_bookmarks` - Auto-split by chapters/sections
+- `insert_pdf_pages` - Insert pages at specific positions
+- `reorder_pdf_pages` - Drag-and-drop style page reordering
+
+### 🔒 Priority 2: Digital Signatures & Security
+- `add_digital_signature` - Sign with digital certificates
+- `verify_pdf_signatures` - Validate signature authenticity
+- `add_password_protection` - Encrypt with user/owner passwords
+- `remove_pdf_passwords` - Decrypt protected PDFs
+- `set_pdf_permissions` - Control print/copy/edit rights
+- `redact_sensitive_data` - Black out confidential information
+
+### ✏️ Priority 3: Advanced Annotations & Markup
+- `add_sticky_notes` - Comments and reviews
+- `add_highlights` - Text highlighting with colors
+- `add_stamps` - Approved/Draft/Confidential stamps
+- `add_drawings` - Freehand annotations and shapes
+- `extract_all_annotations` - Export comments to JSON/CSV
+
+### 🔍 Priority 4: Document Comparison & Analysis
+- `compare_pdf_versions` - Visual diff between document versions
+- `detect_pdf_changes` - Highlight additions/deletions
+- `analyze_reading_order` - Accessibility compliance checking
+- `extract_pdf_statistics` - Word count, reading time, complexity
+- `detect_pdf_quality_issues` - Scan for structural problems
+
+### 📄 Priority 5: Advanced Content Extraction
+- `extract_pdf_links` - All URLs and internal links
+- `extract_pdf_fonts` - Font usage analysis
+- `extract_pdf_colors` - Color palette extraction
+- `extract_pdf_layers` - CAD/design layer information
+- `convert_pdf_to_formats` - Word, Excel, PowerPoint, HTML conversion
+
+### ⚡ Priority 6: Batch Operations & Automation
+- `batch_process_pdfs` - Apply operations to multiple files
+- `create_pdf_portfolio` - Combine different file types
+- `auto_ocr_detection` - Smart OCR for scanned pages only
+- `optimize_pdf_size` - Intelligent compression algorithms
+- `standardize_pdf_metadata` - Bulk metadata updates
+
+### 🚀 Innovative Features
+- `ai_summarize_pdf` - Generate executive summaries
+- `translate_pdf_text` - Multi-language document translation
+- `create_pdf_quiz` - Auto-generate questions from content
+- `extract_pdf_timeline` - Parse dates and create chronologies
+- `analyze_pdf_accessibility` - WCAG compliance checking
+
+### Implementation Notes
+- **Document Assembly** features are universally needed and should be prioritized
+- **Digital Signatures** provide high enterprise value
+- **Batch Operations** essential for automation workflows
+- All features should maintain MCP protocol standards and clean output formatting
+- Consider user experience and context window optimization for each tool
