@@ -1,8 +1,8 @@
 [project]
-name = "mcp-pdf-tools"
-version = "0.1.0"
-description = "FastMCP server for comprehensive PDF processing - text extraction, OCR, table extraction, and more"
-authors = [{name = "RPM", email = "rpm@example.com"}]
+name = "mcp-pdf"
+version = "1.0.0"
+description = "Secure FastMCP server for comprehensive PDF processing - text extraction, OCR, table extraction, forms, annotations, and more"
+authors = [{name = "MCP Team", email = "team@fastmcp.org"}]
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -48,13 +48,14 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/rpm/mcp-pdf-tools"
-Documentation = "https://github.com/rpm/mcp-pdf-tools#readme"
-Repository = "https://github.com/rpm/mcp-pdf-tools.git"
-Issues = "https://github.com/rpm/mcp-pdf-tools/issues"
+Homepage = "https://github.com/rsp2k/mcp-pdf"
+Documentation = "https://github.com/rsp2k/mcp-pdf#readme"
+Repository = "https://github.com/rsp2k/mcp-pdf.git"
+Issues = "https://github.com/rsp2k/mcp-pdf/issues"
+Changelog = "https://github.com/rsp2k/mcp-pdf/releases"
 
 [project.scripts]
-mcp-pdf-tools = "mcp_pdf_tools.server:main"
+mcp-pdf = "mcp_pdf.server:main"
 
 [project.optional-dependencies]
 dev = [

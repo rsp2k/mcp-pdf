@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MCP PDF Tools is a FastMCP server that provides comprehensive PDF processing capabilities including text extraction, table extraction, OCR, image extraction, and format conversion. The server is built on the FastMCP framework and provides intelligent method selection with automatic fallbacks.
+MCP PDF is a FastMCP server that provides comprehensive PDF processing capabilities including text extraction, table extraction, OCR, image extraction, and format conversion. The server is built on the FastMCP framework and provides intelligent method selection with automatic fallbacks.
 
 ## Development Commands
 
@@ -59,7 +59,7 @@ uv run safety check --json && uv run pip-audit --format=json
 ### Running the Server
 ```bash
 # Run MCP server directly
-uv run mcp-pdf-tools
+uv run mcp-pdf
 
 # Verify installation
 uv run python examples/verify_installation.py

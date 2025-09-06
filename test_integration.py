@@ -6,7 +6,7 @@ Integration test to verify basic functionality after security hardening
 import tempfile
 from pathlib import Path
 from reportlab.pdfgen import canvas
-from src.mcp_pdf_tools.server import create_server, validate_pdf_path, validate_page_count
+from src.mcp_pdf.server import create_server, validate_pdf_path, validate_page_count
 import fitz
 
 

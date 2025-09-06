@@ -12,7 +12,7 @@ from pathlib import Path
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from mcp_pdf_tools.server import create_server
+from mcp_pdf.server import create_server
 
 
 async def call_tool(mcp, tool_name: str, **kwargs):

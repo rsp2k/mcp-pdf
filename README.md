@@ -1,8 +1,8 @@
 <div align="center">
 
-# 📄 MCP PDF Tools
+# 📄 MCP PDF
 
-<img src="https://img.shields.io/badge/MCP-PDF%20Tools-red?style=for-the-badge&logo=adobe-acrobat-reader" alt="MCP PDF Tools">
+<img src="https://img.shields.io/badge/MCP-PDF%20Tools-red?style=for-the-badge&logo=adobe-acrobat-reader" alt="MCP PDF">
 
 **🚀 The Ultimate PDF Processing Intelligence Platform for AI**
 
@@ -11,7 +11,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square)](https://www.python.org/downloads/)
 [![FastMCP](https://img.shields.io/badge/FastMCP-2.0+-green.svg?style=flat-square)](https://github.com/jlowin/fastmcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-[![Production Ready](https://img.shields.io/badge/status-production%20ready-brightgreen?style=flat-square)](https://github.com/rpm/mcp-pdf-tools)
+[![Production Ready](https://img.shields.io/badge/status-production%20ready-brightgreen?style=flat-square)](https://github.com/rpm/mcp-pdf)
 [![MCP Protocol](https://img.shields.io/badge/MCP-1.13.0-purple?style=flat-square)](https://modelcontextprotocol.io)
 
 **🤝 Perfect Companion to [MCP Office Tools](https://git.supported.systems/MCP/mcp-office-tools)**
@@ -20,17 +20,17 @@
 
 ---
 
-## ✨ **What Makes MCP PDF Tools Revolutionary?**
+## ✨ **What Makes MCP PDF Revolutionary?**
 
 > 🎯 **The Problem**: PDFs contain incredible intelligence, but extracting it reliably is complex, slow, and often fails.
 >
-> ⚡ **The Solution**: MCP PDF Tools delivers **AI-powered document intelligence** with **23 specialized tools** that understand both content and structure.
+> ⚡ **The Solution**: MCP PDF delivers **AI-powered document intelligence** with **23 specialized tools** that understand both content and structure.
 
 <table>
 <tr>
 <td>
 
-### 🏆 **Why MCP PDF Tools Leads**
+### 🏆 **Why MCP PDF Leads**
 - **🚀 23 Specialized Tools** for every PDF scenario
 - **🧠 AI-Powered Intelligence** beyond basic extraction
 - **🔄 Multi-Library Fallbacks** for 99.9% reliability
@@ -59,8 +59,8 @@
 
 ```bash
 # 1️⃣ Clone and install
-git clone https://github.com/rpm/mcp-pdf-tools
-cd mcp-pdf-tools
+git clone https://github.com/rpm/mcp-pdf
+cd mcp-pdf
 uv sync
 
 # 2️⃣ Install system dependencies (Ubuntu/Debian)
@@ -70,7 +70,7 @@ sudo apt-get install tesseract-ocr tesseract-ocr-eng poppler-utils ghostscript
 uv run python examples/verify_installation.py
 
 # 4️⃣ Run the MCP server
-uv run mcp-pdf-tools
+uv run mcp-pdf
 ```
 
 <details>
@@ -82,8 +82,8 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "pdf-tools": {
       "command": "uv",
-      "args": ["run", "mcp-pdf-tools"],
-      "cwd": "/path/to/mcp-pdf-tools"
+      "args": ["run", "mcp-pdf"],
+      "cwd": "/path/to/mcp-pdf"
     }
   }
 }
@@ -406,7 +406,7 @@ classification = await classify_content("mystery-document.pdf")
 
 | 🔧 **Processing Need** | 📄 **PDF Files** | 📊 **Office Files** | 🔗 **Integration** |
 |-----------------------|------------------|-------------------|-------------------|
-| **Text Extraction** | MCP PDF Tools ✅ | [MCP Office Tools](https://git.supported.systems/MCP/mcp-office-tools) ✅ | **Unified API** |
+| **Text Extraction** | MCP PDF ✅ | [MCP Office Tools](https://git.supported.systems/MCP/mcp-office-tools) ✅ | **Unified API** |
 | **Table Processing** | Advanced ✅ | Advanced ✅ | **Cross-Format** |
 | **Image Extraction** | Smart ✅ | Smart ✅ | **Consistent** |
 | **Format Detection** | AI-Powered ✅ | AI-Powered ✅ | **Intelligent** |
@@ -464,8 +464,8 @@ comparison = await compare_cross_format_documents([
 
 ```bash
 # Clone repository
-git clone https://github.com/rpm/mcp-pdf-tools
-cd mcp-pdf-tools
+git clone https://github.com/rpm/mcp-pdf
+cd mcp-pdf
 
 # Install with uv (fastest)
 uv sync
@@ -491,7 +491,7 @@ RUN apt-get update && apt-get install -y \
 COPY . /app
 WORKDIR /app
 RUN pip install -e .
-CMD ["mcp-pdf-tools"]
+CMD ["mcp-pdf"]
 ```
 
 </details>
@@ -504,8 +504,8 @@ CMD ["mcp-pdf-tools"]
   "mcpServers": {
     "pdf-tools": {
       "command": "uv",
-      "args": ["run", "mcp-pdf-tools"],
-      "cwd": "/path/to/mcp-pdf-tools"
+      "args": ["run", "mcp-pdf"],
+      "cwd": "/path/to/mcp-pdf"
     },
     "office-tools": {
       "command": "mcp-office-tools"
@@ -523,8 +523,8 @@ CMD ["mcp-pdf-tools"]
 
 ```bash
 # Clone and setup
-git clone https://github.com/rpm/mcp-pdf-tools
-cd mcp-pdf-tools
+git clone https://github.com/rpm/mcp-pdf
+cd mcp-pdf
 uv sync --dev
 
 # Quality checks
@@ -620,8 +620,8 @@ uv run python examples/verify_installation.py
 
 ### **🌟 Join the PDF Intelligence Revolution!**
 
-[![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/rpm/mcp-pdf-tools)
-[![Issues](https://img.shields.io/badge/Issues-Welcome-green?style=for-the-badge&logo=github)](https://github.com/rpm/mcp-pdf-tools/issues)
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/rpm/mcp-pdf)
+[![Issues](https://img.shields.io/badge/Issues-Welcome-green?style=for-the-badge&logo=github)](https://github.com/rpm/mcp-pdf/issues)
 [![MCP Office Tools](https://img.shields.io/badge/Companion-MCP%20Office%20Tools-blue?style=for-the-badge)](https://git.supported.systems/MCP/mcp-office-tools)
 
 **💬 Enterprise Support Available** • **🐛 Bug Bounty Program** • **💡 Feature Requests Welcome**
@@ -649,7 +649,7 @@ uv run python examples/verify_installation.py
 
 ### **🔗 Complete Document Processing Solution**
 
-**PDF Intelligence** ➜ **[MCP PDF Tools](https://github.com/rpm/mcp-pdf-tools)** (You are here!)  
+**PDF Intelligence** ➜ **[MCP PDF](https://github.com/rpm/mcp-pdf)** (You are here!)  
 **Office Intelligence** ➜ **[MCP Office Tools](https://git.supported.systems/MCP/mcp-office-tools)**  
 **Unified Power** ➜ **Both Tools Together**
 
@@ -657,7 +657,7 @@ uv run python examples/verify_installation.py
 
 ### **⭐ Star both repositories for the complete solution! ⭐**
 
-**📄 [Star MCP PDF Tools](https://github.com/rpm/mcp-pdf-tools)** • **📊 [Star MCP Office Tools](https://git.supported.systems/MCP/mcp-office-tools)**
+**📄 [Star MCP PDF](https://github.com/rpm/mcp-pdf)** • **📊 [Star MCP Office Tools](https://git.supported.systems/MCP/mcp-office-tools)**
 
 *Building the future of intelligent document processing* 🚀
 

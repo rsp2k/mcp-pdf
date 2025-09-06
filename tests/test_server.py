@@ -7,7 +7,7 @@ import base64
 import pandas as pd
 from pathlib import Path
 
-from mcp_pdf_tools.server import (
+from mcp_pdf.server import (
     create_server,
     validate_pdf_path,
     detect_scanned_pdf,

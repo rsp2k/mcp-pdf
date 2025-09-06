@@ -10,7 +10,7 @@ import os
 # Add src to path
 sys.path.insert(0, 'src')
 
-from mcp_pdf_tools.server import validate_pdf_path, download_pdf_from_url
+from mcp_pdf.server import validate_pdf_path, download_pdf_from_url
 
 async def test_url_validation():
     """Test URL validation and download"""

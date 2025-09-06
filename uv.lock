@@ -1031,8 +1031,8 @@ wheels = [
 ]
 
 [[package]]
-name = "mcp-pdf-tools"
-version = "0.1.0"
+name = "mcp-pdf"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "camelot-py", extra = ["cv"] },

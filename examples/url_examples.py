@@ -10,7 +10,7 @@ import os
 # Add src to path for development
 sys.path.insert(0, '../src')
 
-from mcp_pdf_tools.server import (
+from mcp_pdf.server import (
     extract_text, extract_metadata, pdf_to_markdown, 
     extract_tables, is_scanned_pdf
 )

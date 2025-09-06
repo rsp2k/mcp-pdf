@@ -10,7 +10,7 @@ import os
 # Add src to path
 sys.path.insert(0, 'src')
 
-from mcp_pdf_tools.server import parse_pages_parameter
+from mcp_pdf.server import parse_pages_parameter
 
 def test_page_parsing():
     """Test page parameter parsing (1-based user input -> 0-based internal)"""

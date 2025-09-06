@@ -7,7 +7,7 @@ Tests the security hardening we implemented
 import pytest
 import tempfile
 from pathlib import Path
-from src.mcp_pdf_tools.server import (
+from src.mcp_pdf.server import (
     validate_image_id, 
     validate_output_path, 
     safe_json_parse, 

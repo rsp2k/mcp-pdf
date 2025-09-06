@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 async def main():
     try:
-        from mcp_pdf_tools import create_server, __version__
+        from mcp_pdf import create_server, __version__
         
         print(f"✅ MCP PDF Tools v{__version__} imported successfully!")
         
