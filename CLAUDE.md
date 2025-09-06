@@ -44,6 +44,18 @@ uv run ruff check src/ tests/ examples/
 uv run mypy src/
 ```
 
+### Security Scanning
+```bash
+# Check for known vulnerabilities in dependencies
+uv run safety check
+
+# Audit Python packages for known vulnerabilities
+uv run pip-audit
+
+# Run comprehensive security scan
+uv run safety check --json && uv run pip-audit --format=json
+```
+
 ### Running the Server
 ```bash
 # Run MCP server directly
@@ -75,7 +87,7 @@ uv publish
 
 ### Tool Categories
 
-1. **Text Extraction**: `extract_text` - Intelligent method selection (PyMuPDF, pdfplumber, pypdf)
+1. **Text Extraction**: `extract_text` - Intelligent method selection with automatic chunking for large files
 2. **Table Extraction**: `extract_tables` - Auto-fallback through Camelot → pdfplumber → Tabula
 3. **OCR Processing**: `ocr_pdf` - Tesseract with preprocessing options
 4. **Document Analysis**: `is_scanned_pdf`, `get_document_structure`, `extract_metadata`
@@ -83,7 +95,7 @@ uv publish
 6. **Image Processing**: `extract_images` - Extract images with custom output paths and clean summary output
 7. **PDF Forms**: `extract_form_data`, `create_form_pdf`, `fill_form_pdf`, `add_form_fields` - Complete form lifecycle management
 8. **Document Assembly**: `merge_pdfs`, `split_pdf_by_pages`, `reorder_pdf_pages` - PDF manipulation and organization
-9. **Annotations & Markup**: `add_sticky_notes`, `add_highlights`, `add_stamps`, `extract_all_annotations` - Collaboration and review tools
+9. **Annotations & Markup**: `add_sticky_notes`, `add_highlights`, `add_stamps`, `add_video_notes`, `extract_all_annotations` - Collaboration and multimedia review tools
 
 ### MCP Client-Friendly Design
 
@@ -94,12 +106,19 @@ uv publish
 - **Prevents Context Overflow**: Avoids verbose output that fills client message windows
 - **User Control**: Flexible output directory support with automatic directory creation
 
-### Intelligent Fallbacks
+### Intelligent Fallbacks and Token Management
 
 The server implements smart fallback mechanisms:
 - Text extraction automatically detects scanned PDFs and suggests OCR
 - Table extraction tries multiple methods until tables are found
 - All operations include comprehensive error handling with helpful hints
+
+**Smart Chunking for Large PDFs:**
+- Automatic token estimation and overflow prevention
+- Page-boundary chunking (default 10 pages per chunk)  
+- Intelligent truncation at sentence boundaries when needed
+- Clear guidance for accessing subsequent chunks
+- Prevents MCP "response too large" errors commonly reported by users
 
 ### Dependencies Management
 
@@ -113,8 +132,39 @@ Critical system dependencies:
 
 Environment variables (optional):
 - `TESSDATA_PREFIX`: Tesseract language data location
-- `PDF_TEMP_DIR`: Temporary file processing directory
+- `PDF_TEMP_DIR`: Temporary file processing directory (defaults to `/tmp/mcp-pdf-processing`)
 - `DEBUG`: Enable debug logging
+
+### Security Features
+
+The server implements comprehensive security hardening:
+
+**Input Validation:**
+- File size limits: 100MB for PDFs, 50MB for images
+- Page count limits: Max 1000 pages per document
+- Path traversal protection for all file operations
+- JSON input size limits (10KB) to prevent DoS attacks
+- Safe parsing of user inputs with `ast.literal_eval` size limits
+
+**Access Control:**
+- Secure output directory validation (restricted to `/tmp`, `/var/tmp`, cache directory)
+- URL allowlisting for download operations (configurable via `ALLOWED_DOMAINS`)
+- File permission enforcement (0o700 for cache directories, 0o600 for cached files)
+
+**Error Handling:**
+- Sanitized error messages to prevent information disclosure
+- Removal of sensitive data patterns (file paths, emails, SSNs)
+- Generic error responses for failed operations
+
+**Resource Management:**
+- Streaming downloads with size checking to prevent memory exhaustion
+- Page count validation to prevent resource exhaustion attacks
+- Secure temporary file handling with automatic cleanup
+
+**Vulnerability Scanning:**
+- Integrated `safety` and `pip-audit` tools for dependency scanning
+- GitHub Actions workflow for continuous security monitoring
+- Daily automated vulnerability assessments
 
 ## Development Notes
 
@@ -188,6 +238,41 @@ The server provides comprehensive document organization capabilities:
 - Support for page duplication and omission
 - Automatic bookmark reference adjustment
 - Detailed tracking of page transformations
+
+### PDF Video Annotations
+
+The server provides innovative multimedia annotation capabilities:
+
+**Video Sticky Notes (`add_video_notes`)**:
+- Embed video files directly into PDF as attachments
+- Create visual sticky notes with play button icons
+- Click-to-launch functionality using JavaScript actions
+- Smart format validation with FFmpeg conversion suggestions
+- Supports multiple video formats (.mp4, .mov, .avi, .mkv, .webm)
+- Automatic file size optimization recommendations
+- Color-coded video notes with customizable sizes
+- Self-contained multimedia PDFs with no external dependencies
+
+**Technical Implementation:**
+- Videos embedded as PDF file attachments with unique identifiers
+- Screen annotations with JavaScript `exportDataObject` commands
+- Compatible with Adobe Acrobat/Reader JavaScript security model
+- Automatic video extraction and system player launch
+- Visual indicators include play icons and video titles
+
+**Format Optimization:**
+- Intelligent format validation and compatibility checking
+- Automatic FFmpeg conversion suggestions for unsupported formats
+- File size warnings and compression recommendations for large videos
+- Optimal settings: MP4 with H.264/AAC codec for maximum compatibility
+- Example conversions provided for easy command-line optimization
+
+**Use Cases:**
+- Technical documentation with embedded demo videos
+- Training materials with interactive multimedia content
+- Inspection reports with video evidence
+- Collaborative reviews with video explanations
+- Educational content with supplementary video materials
 
 ### Docker Support
 The project includes Docker support with all system dependencies pre-installed, useful for consistent cross-platform development and deployment.

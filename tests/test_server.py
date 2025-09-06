@@ -191,12 +191,6 @@ class TestTableExtraction:
         assert result["method_used"] == "pdfplumber"
         assert "camelot" in result["methods_tried"]
         assert "pdfplumber" in result["methods_tried"]
-                preprocess=True
-            )
-            
-            assert result["preprocessing_applied"] is True
-            mock_image.convert.assert_called_with('L')  # Grayscale conversion
-            mock_enhancer.enhance.assert_called_with(2.0)  # Contrast enhancement
 
 
 class TestDocumentAnalysis:

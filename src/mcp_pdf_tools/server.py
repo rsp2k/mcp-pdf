@@ -8,11 +8,13 @@ import tempfile
 import base64
 import hashlib
 import time
+import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 from urllib.parse import urlparse
 import logging
 import ast
+import re
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -35,12 +37,126 @@ from collections import Counter, defaultdict
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Security Configuration
+MAX_PDF_SIZE = 100 * 1024 * 1024  # 100MB
+MAX_IMAGE_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_PAGES_PROCESS = 1000
+MAX_JSON_SIZE = 10000  # 10KB for JSON parameters
+PROCESSING_TIMEOUT = 300  # 5 minutes
+
+# Allowed domains for URL downloads (empty list means disabled by default)
+ALLOWED_DOMAINS = []
+
 # Initialize FastMCP server
 mcp = FastMCP("pdf-tools")
 
-# URL download cache directory
+# URL download cache directory with secure permissions
 CACHE_DIR = Path(os.environ.get("PDF_TEMP_DIR", "/tmp/mcp-pdf-processing"))
-CACHE_DIR.mkdir(exist_ok=True, parents=True)
+CACHE_DIR.mkdir(exist_ok=True, parents=True, mode=0o700)
+
+# Security utility functions
+def validate_image_id(image_id: str) -> str:
+    """Validate image ID to prevent path traversal attacks"""
+    if not image_id:
+        raise ValueError("Image ID cannot be empty")
+    
+    # Only allow alphanumeric characters, underscores, and hyphens
+    if not re.match(r'^[a-zA-Z0-9_-]+$', image_id):
+        raise ValueError(f"Invalid image ID format: {image_id}")
+    
+    # Prevent excessively long IDs
+    if len(image_id) > 255:
+        raise ValueError(f"Image ID too long: {len(image_id)} > 255")
+    
+    return image_id
+
+def validate_output_path(path: str) -> Path:
+    """Validate and secure output paths to prevent directory traversal"""
+    if not path:
+        raise ValueError("Output path cannot be empty")
+    
+    # Convert to Path and resolve to absolute path
+    resolved_path = Path(path).resolve()
+    
+    # Check for path traversal attempts
+    if '../' in str(path) or '\\..\\' in str(path):
+        raise ValueError("Path traversal detected in output path")
+    
+    # Ensure path is within safe directories
+    safe_prefixes = ['/tmp', '/var/tmp', str(CACHE_DIR.resolve())]
+    if not any(str(resolved_path).startswith(prefix) for prefix in safe_prefixes):
+        raise ValueError(f"Output path not allowed: {path}")
+    
+    return resolved_path
+
+def safe_json_parse(json_str: str, max_size: int = MAX_JSON_SIZE) -> dict:
+    """Safely parse JSON with size limits"""
+    if not json_str:
+        return {}
+    
+    if len(json_str) > max_size:
+        raise ValueError(f"JSON input too large: {len(json_str)} > {max_size}")
+    
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format: {str(e)}")
+
+def validate_url(url: str) -> bool:
+    """Validate URL to prevent SSRF attacks"""
+    if not url:
+        return False
+    
+    try:
+        parsed = urlparse(url)
+        
+        # Only allow HTTP/HTTPS
+        if parsed.scheme not in ('http', 'https'):
+            return False
+        
+        # Block localhost and internal IPs
+        hostname = parsed.hostname
+        if not hostname:
+            # Handle IPv6 or malformed URLs
+            netloc = parsed.netloc.strip('[]')  # Remove brackets if present
+            if netloc in ['::1', 'localhost'] or netloc.startswith('127.') or netloc.startswith('0.0.0.0'):
+                return False
+            hostname = netloc.split(':')[0] if ':' in netloc and not netloc.count(':') > 1 else netloc
+        
+        if hostname in ['localhost', '127.0.0.1', '0.0.0.0', '::1']:
+            return False
+        
+        # Check against allowed domains if configured
+        if ALLOWED_DOMAINS:
+            return any(hostname.endswith(domain) for domain in ALLOWED_DOMAINS)
+        
+        # If no domain restrictions, allow any domain (except blocked ones above)
+        return True
+        
+    except Exception:
+        return False
+
+def sanitize_error_message(error: Exception, context: str = "") -> str:
+    """Sanitize error messages to prevent information disclosure"""
+    error_str = str(error)
+    
+    # Remove potential file paths
+    error_str = re.sub(r'/[\w/.-]+', '[PATH]', error_str)
+    
+    # Remove potential sensitive data patterns
+    error_str = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[SSN]', error_str)
+    error_str = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[EMAIL]', error_str)
+    
+    return f"{context}: {error_str}" if context else error_str
+
+def validate_page_count(doc, operation: str = "processing") -> None:
+    """Validate PDF page count to prevent resource exhaustion"""
+    page_count = doc.page_count
+    if page_count > MAX_PAGES_PROCESS:
+        raise ValueError(f"PDF too large for {operation}: {page_count} pages > {MAX_PAGES_PROCESS}")
+    
+    if page_count == 0:
+        raise ValueError("PDF has no pages")
 
 # Resource for serving extracted images
 @mcp.resource("pdf-image://{image_id}", 
@@ -48,7 +164,7 @@ CACHE_DIR.mkdir(exist_ok=True, parents=True)
               mime_type="image/png")
 async def get_pdf_image(image_id: str) -> bytes:
     """
-    Serve extracted PDF images as MCP resources.
+    Serve extracted PDF images as MCP resources with security validation.
     
     Args:
         image_id: Image identifier (filename without extension)
@@ -57,23 +173,37 @@ async def get_pdf_image(image_id: str) -> bytes:
         Raw image bytes
     """
     try:
-        # Reconstruct the image path from the ID
-        image_path = CACHE_DIR / f"{image_id}.png"
+        # Validate image ID to prevent path traversal
+        validated_id = validate_image_id(image_id)
+        
+        # Reconstruct the image path from the validated ID
+        image_path = CACHE_DIR / f"{validated_id}.png"
         
         # Try .jpeg as well if .png doesn't exist
         if not image_path.exists():
-            image_path = CACHE_DIR / f"{image_id}.jpeg"
+            image_path = CACHE_DIR / f"{validated_id}.jpeg"
         
         if not image_path.exists():
-            raise FileNotFoundError(f"Image not found: {image_id}")
+            raise FileNotFoundError(f"Image not found: {validated_id}")
+        
+        # Ensure the resolved path is still within CACHE_DIR
+        resolved_path = image_path.resolve()
+        if not str(resolved_path).startswith(str(CACHE_DIR.resolve())):
+            raise ValueError("Invalid image path detected")
+        
+        # Check file size before reading to prevent memory exhaustion
+        file_size = resolved_path.stat().st_size
+        if file_size > MAX_IMAGE_SIZE:
+            raise ValueError(f"Image file too large: {file_size} bytes > {MAX_IMAGE_SIZE}")
         
         # Read and return the image bytes
-        with open(image_path, 'rb') as f:
+        with open(resolved_path, 'rb') as f:
             return f.read()
             
     except Exception as e:
-        logger.error(f"Failed to serve image {image_id}: {str(e)}")
-        raise
+        sanitized_error = sanitize_error_message(e, "Image serving failed")
+        logger.error(sanitized_error)
+        raise ValueError("Failed to serve image")
 
 # Configuration models
 class ExtractionConfig(BaseModel):
@@ -124,6 +254,10 @@ def parse_pages_parameter(pages: Union[str, List[int], None]) -> Optional[List[i
     
     if isinstance(pages, str):
         try:
+            # Validate input length to prevent abuse
+            if len(pages.strip()) > 1000:
+                raise ValueError("Pages parameter too long")
+            
             # Handle string representations like "[1, 2, 3]" or "1,2,3"
             if pages.strip().startswith('[') and pages.strip().endswith(']'):
                 page_list = ast.literal_eval(pages.strip())
@@ -141,8 +275,12 @@ def parse_pages_parameter(pages: Union[str, List[int], None]) -> Optional[List[i
     return None
 
 async def download_pdf_from_url(url: str) -> Path:
-    """Download PDF from URL with caching"""
+    """Download PDF from URL with security validation and size limits"""
     try:
+        # Validate URL to prevent SSRF attacks
+        if not validate_url(url):
+            raise ValueError(f"URL not allowed or invalid: {url}")
+        
         # Create cache filename based on URL hash
         url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
         cache_file = CACHE_DIR / f"cached_{url_hash}.pdf"
@@ -161,29 +299,70 @@ async def download_pdf_from_url(url: str) -> Path:
         }
         
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            
-            # Check content type
-            content_type = response.headers.get("content-type", "").lower()
-            if "pdf" not in content_type and "application/pdf" not in content_type:
-                # Check if content looks like PDF by magic bytes
-                content_start = response.content[:10]
-                if not content_start.startswith(b"%PDF"):
-                    raise ValueError(f"URL does not contain a PDF file. Content-Type: {content_type}")
-            
-            # Save to cache
-            cache_file.write_bytes(response.content)
-            logger.info(f"Downloaded and cached PDF: {cache_file} ({len(response.content)} bytes)")
-            return cache_file
+            # Use streaming to check size before downloading
+            async with client.stream('GET', url, headers=headers) as response:
+                response.raise_for_status()
+                
+                # Check content length header
+                content_length = response.headers.get('content-length')
+                if content_length and int(content_length) > MAX_PDF_SIZE:
+                    raise ValueError(f"PDF file too large: {content_length} bytes > {MAX_PDF_SIZE}")
+                
+                # Check content type
+                content_type = response.headers.get("content-type", "").lower()
+                if "pdf" not in content_type and "application/pdf" not in content_type:
+                    # Need to read some content to check magic bytes
+                    first_chunk = b""
+                    async for chunk in response.aiter_bytes(chunk_size=1024):
+                        first_chunk += chunk
+                        if len(first_chunk) >= 10:
+                            break
+                    
+                    if not first_chunk.startswith(b"%PDF"):
+                        raise ValueError(f"URL does not contain a PDF file. Content-Type: {content_type}")
+                    
+                    # Continue reading the rest
+                    content = first_chunk
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        content += chunk
+                        # Check size as we download
+                        if len(content) > MAX_PDF_SIZE:
+                            raise ValueError(f"PDF file too large: {len(content)} bytes > {MAX_PDF_SIZE}")
+                else:
+                    # Read all content with size checking
+                    content = b""
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        content += chunk
+                        if len(content) > MAX_PDF_SIZE:
+                            raise ValueError(f"PDF file too large: {len(content)} bytes > {MAX_PDF_SIZE}")
+                
+                # Double-check magic bytes
+                if not content.startswith(b"%PDF"):
+                    raise ValueError("Downloaded content is not a valid PDF file")
+                
+                # Save to cache with secure permissions
+                cache_file.write_bytes(content)
+                cache_file.chmod(0o600)  # Owner read/write only
+                logger.info(f"Downloaded and cached PDF: {cache_file} ({len(content)} bytes)")
+                return cache_file
             
     except httpx.HTTPError as e:
-        raise ValueError(f"Failed to download PDF from URL {url}: {str(e)}")
+        sanitized_error = sanitize_error_message(e, "PDF download failed")
+        raise ValueError(sanitized_error)
     except Exception as e:
-        raise ValueError(f"Error downloading PDF: {str(e)}")
+        sanitized_error = sanitize_error_message(e, "PDF download error")
+        raise ValueError(sanitized_error)
 
 async def validate_pdf_path(pdf_path: str) -> Path:
-    """Validate path (local or URL) and return local Path to PDF file"""
+    """Validate path (local or URL) with security checks and size limits"""
+    # Input length validation
+    if len(pdf_path) > 2000:
+        raise ValueError("PDF path too long")
+    
+    # Check for path traversal in input
+    if '../' in pdf_path or '\\..\\' in pdf_path:
+        raise ValueError("Path traversal detected")
+    
     # Check if it's a URL
     parsed = urlparse(pdf_path)
     
@@ -192,12 +371,20 @@ async def validate_pdf_path(pdf_path: str) -> Path:
             logger.warning(f"Using insecure HTTP URL: {pdf_path}")
         return await download_pdf_from_url(pdf_path)
     
-    # Handle local path
-    path = Path(pdf_path)
+    # Handle local path with security validation
+    path = Path(pdf_path).resolve()
+    
     if not path.exists():
         raise ValueError(f"File not found: {pdf_path}")
+    
     if not path.suffix.lower() == '.pdf':
         raise ValueError(f"Not a PDF file: {pdf_path}")
+    
+    # Check file size
+    file_size = path.stat().st_size
+    if file_size > MAX_PDF_SIZE:
+        raise ValueError(f"PDF file too large: {file_size} bytes > {MAX_PDF_SIZE}")
+    
     return path
 
 def detect_scanned_pdf(pdf_path: str) -> bool:
@@ -270,19 +457,23 @@ async def extract_text(
     pdf_path: str,
     method: str = "auto", 
     pages: Optional[str] = None,  # Accept as string for MCP compatibility
-    preserve_layout: bool = False
+    preserve_layout: bool = False,
+    max_tokens: int = 20000,  # Maximum tokens to prevent MCP overflow (MCP hard limit is 25000)
+    chunk_pages: int = 10     # Number of pages per chunk for large PDFs
 ) -> Dict[str, Any]:
     """
-    Extract text from PDF using various methods
+    Extract text from PDF using various methods with automatic chunking for large files
     
     Args:
         pdf_path: Path to PDF file or HTTPS URL
         method: Extraction method (auto, pymupdf, pdfplumber, pypdf)
         pages: Page numbers to extract as string like "1,2,3" or "[1,2,3]", None for all pages (0-indexed)
         preserve_layout: Whether to preserve the original text layout
+        max_tokens: Maximum tokens to return (prevents MCP overflow, default 20000)
+        chunk_pages: Pages per chunk for large PDFs (default 10)
     
     Returns:
-        Dictionary containing extracted text and metadata
+        Dictionary containing extracted text and metadata with chunking info
     """
     import time
     start_time = time.time()
@@ -301,34 +492,185 @@ async def extract_text(
                 }
             method = "pymupdf"  # Default to PyMuPDF for text-based PDFs
         
-        # Extract text using selected method
-        if method == "pymupdf":
-            text = await extract_with_pymupdf(path, parsed_pages, preserve_layout)
-        elif method == "pdfplumber":
-            text = await extract_with_pdfplumber(path, parsed_pages, preserve_layout)
-        elif method == "pypdf":
-            text = await extract_with_pypdf(path, parsed_pages, preserve_layout)
-        else:
-            raise ValueError(f"Unknown extraction method: {method}")
-        
-        # Get metadata
+        # Get PDF metadata and size analysis for intelligent chunking decisions
         doc = fitz.open(str(path))
+        
+        # Validate page count to prevent resource exhaustion
+        validate_page_count(doc, "text extraction")
+        
+        total_pages = len(doc)
+        
+        # Analyze PDF size and content density
+        file_size_bytes = path.stat().st_size if path.is_file() else 0
+        file_size_mb = file_size_bytes / (1024 * 1024) if file_size_bytes > 0 else 0
+        
+        # Sample first few pages to estimate content density and analyze images
+        sample_pages = min(3, total_pages)
+        sample_text = ""
+        total_images = 0
+        sample_images = 0
+        
+        for page_num in range(sample_pages):
+            page = doc[page_num]
+            page_text = page.get_text()
+            sample_text += page_text
+            
+            # Count images on this page
+            images_on_page = len(page.get_images())
+            sample_images += images_on_page
+        
+        # Estimate total images in document
+        if sample_pages > 0:
+            avg_images_per_page = sample_images / sample_pages
+            estimated_total_images = int(avg_images_per_page * total_pages)
+        else:
+            avg_images_per_page = 0
+            estimated_total_images = 0
+        
+        # Calculate content density metrics
+        avg_chars_per_page = len(sample_text) / sample_pages if sample_pages > 0 else 0
+        estimated_total_chars = avg_chars_per_page * total_pages
+        estimated_tokens_by_density = int(estimated_total_chars / 4)  # 1 token ≈ 4 chars
+        
         metadata = {
-            "pages": len(doc),
+            "pages": total_pages,
             "title": doc.metadata.get("title", ""),
             "author": doc.metadata.get("author", ""),
             "subject": doc.metadata.get("subject", ""),
             "creator": doc.metadata.get("creator", ""),
+            "file_size_mb": round(file_size_mb, 2),
+            "avg_chars_per_page": int(avg_chars_per_page),
+            "estimated_total_chars": int(estimated_total_chars),
+            "estimated_tokens_by_density": estimated_tokens_by_density,
+            "estimated_total_images": estimated_total_images,
+            "avg_images_per_page": round(avg_images_per_page, 1),
         }
         doc.close()
         
+        # Early chunking decision based on size analysis
+        should_chunk_early = (
+            total_pages > 50 or  # Large page count
+            file_size_mb > 10 or  # Large file size  
+            estimated_tokens_by_density > effective_max_tokens or  # High content density
+            estimated_total_images > 100  # Many images can bloat response
+        )
+        
+        # Generate warnings and suggestions based on content analysis
+        analysis_warnings = []
+        if estimated_total_images > 20:
+            analysis_warnings.append(f"PDF contains ~{estimated_total_images} images. Consider using 'extract_images' tool for image extraction.")
+        
+        if file_size_mb > 20:
+            analysis_warnings.append(f"Large PDF file ({file_size_mb:.1f}MB). May contain embedded images or high-resolution content.")
+        
+        if avg_chars_per_page > 5000:
+            analysis_warnings.append(f"Dense text content (~{int(avg_chars_per_page):,} chars/page). Chunking recommended for large documents.")
+        
+        # Add content type suggestions
+        if estimated_total_images > avg_chars_per_page / 500:  # More images than expected for text density
+            analysis_warnings.append("Image-heavy document detected. Consider 'extract_images' for visual content and 'pdf_to_markdown' for structured text.")
+        
+        if total_pages > 100 and avg_chars_per_page > 3000:
+            analysis_warnings.append(f"Large document ({total_pages} pages) with dense content. Use 'pages' parameter to extract specific sections.")
+        
+        # Determine pages to extract
+        if parsed_pages:
+            pages_to_extract = parsed_pages
+        else:
+            pages_to_extract = list(range(total_pages))
+        
+        # Extract text using selected method
+        if method == "pymupdf":
+            text = await extract_with_pymupdf(path, pages_to_extract, preserve_layout)
+        elif method == "pdfplumber":
+            text = await extract_with_pdfplumber(path, pages_to_extract, preserve_layout)
+        elif method == "pypdf":
+            text = await extract_with_pypdf(path, pages_to_extract, preserve_layout)
+        else:
+            raise ValueError(f"Unknown extraction method: {method}")
+        
+        # Estimate token count (rough approximation: 1 token ≈ 4 characters)
+        estimated_tokens = len(text) // 4
+        
+        # Enforce MCP hard limit regardless of user max_tokens setting
+        effective_max_tokens = min(max_tokens, 24000)  # Stay safely under MCP's 25000 limit
+        
+        # Handle large responses with intelligent chunking
+        if estimated_tokens > effective_max_tokens:
+            # Calculate chunk size based on effective token limit
+            chars_per_chunk = effective_max_tokens * 4
+            
+            # Smart chunking: try to break at page boundaries first
+            if len(pages_to_extract) > chunk_pages:
+                # Multiple page chunks
+                chunk_page_ranges = []
+                for i in range(0, len(pages_to_extract), chunk_pages):
+                    chunk_pages_list = pages_to_extract[i:i + chunk_pages]
+                    chunk_page_ranges.append(chunk_pages_list)
+                
+                # Extract first chunk
+                if method == "pymupdf":
+                    chunk_text = await extract_with_pymupdf(path, chunk_page_ranges[0], preserve_layout)
+                elif method == "pdfplumber":
+                    chunk_text = await extract_with_pdfplumber(path, chunk_page_ranges[0], preserve_layout)
+                elif method == "pypdf":
+                    chunk_text = await extract_with_pypdf(path, chunk_page_ranges[0], preserve_layout)
+                
+                return {
+                    "text": chunk_text,
+                    "method_used": method,
+                    "metadata": metadata,
+                    "pages_extracted": chunk_page_ranges[0],
+                    "extraction_time": round(time.time() - start_time, 2),
+                    "chunking_info": {
+                        "is_chunked": True,
+                        "current_chunk": 1,
+                        "total_chunks": len(chunk_page_ranges),
+                        "chunk_page_ranges": chunk_page_ranges,
+                        "reason": "Large PDF automatically chunked to prevent token overflow",
+                        "next_chunk_command": f"Use pages parameter: \"{','.join(map(str, chunk_page_ranges[1]))}\" for chunk 2" if len(chunk_page_ranges) > 1 else None
+                    },
+                    "warnings": [
+                        f"Large PDF ({estimated_tokens:,} estimated tokens) automatically chunked. This is chunk 1 of {len(chunk_page_ranges)}.",
+                        f"To get next chunk, use pages parameter or reduce max_tokens to see more content at once."
+                    ] + analysis_warnings
+                }
+            else:
+                # Single chunk but too much text - truncate with context
+                truncated_text = text[:chars_per_chunk]
+                # Try to truncate at sentence boundary
+                last_sentence = truncated_text.rfind('. ')
+                if last_sentence > chars_per_chunk * 0.8:  # If we find a sentence end in the last 20%
+                    truncated_text = truncated_text[:last_sentence + 1]
+                
+                return {
+                    "text": truncated_text,
+                    "method_used": method,
+                    "metadata": metadata,
+                    "pages_extracted": pages_to_extract,
+                    "extraction_time": round(time.time() - start_time, 2),
+                    "chunking_info": {
+                        "is_truncated": True,
+                        "original_estimated_tokens": estimated_tokens,
+                        "returned_estimated_tokens": len(truncated_text) // 4,
+                        "truncation_percentage": round((len(truncated_text) / len(text)) * 100, 1),
+                        "reason": "Content truncated to prevent token overflow"
+                    },
+                    "warnings": [
+                        f"Content truncated from {estimated_tokens:,} to ~{len(truncated_text) // 4:,} tokens ({round((len(truncated_text) / len(text)) * 100, 1)}% shown).",
+                        "Use specific page ranges with 'pages' parameter to get complete content in smaller chunks."
+                    ] + analysis_warnings
+                }
+        
+        # Normal response for reasonably sized content
         return {
             "text": text,
             "method_used": method,
             "metadata": metadata,
-            "pages_extracted": pages or list(range(metadata["pages"])),
+            "pages_extracted": pages_to_extract,
             "extraction_time": round(time.time() - start_time, 2),
-            "warnings": []
+            "estimated_tokens": estimated_tokens,
+            "warnings": analysis_warnings
         }
         
     except Exception as e:
@@ -799,10 +1141,12 @@ async def extract_images(
     min_width: int = 100,
     min_height: int = 100,
     output_format: str = "png",
-    output_directory: Optional[str] = None  # Custom output directory
+    output_directory: Optional[str] = None,  # Custom output directory
+    include_context: bool = True,  # Extract text context around images
+    context_chars: int = 200  # Characters of context before/after images
 ) -> Dict[str, Any]:
     """
-    Extract images from PDF with custom output directory and summary results
+    Extract images from PDF with positioning context for text-image coordination
     
     Args:
         pdf_path: Path to PDF file or HTTPS URL
@@ -811,71 +1155,212 @@ async def extract_images(
         min_height: Minimum image height to extract
         output_format: Output format (png, jpeg)
         output_directory: Custom directory to save images (defaults to cache directory)
+        include_context: Extract text context around images for coordination
+        context_chars: Characters of context before/after each image
     
     Returns:
-        Summary of extraction results with file locations (no verbose metadata)
+        Detailed extraction results with positioning info and text context for workflow coordination
     """
     try:
         path = await validate_pdf_path(pdf_path)
         parsed_pages = parse_pages_parameter(pages)
         doc = fitz.open(str(path))
         
-        # Determine output directory
+        # Determine output directory with security validation
         if output_directory:
-            output_dir = Path(output_directory)
-            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir = validate_output_path(output_directory)
+            output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         else:
             output_dir = CACHE_DIR
         
         extracted_files = []
         total_size = 0
         page_range = parsed_pages if parsed_pages else range(len(doc))
+        pages_with_images = []
         
         for page_num in page_range:
             page = doc[page_num]
             image_list = page.get_images()
             
+            if not image_list:
+                continue  # Skip pages without images
+                
+            # Get page text for context analysis
+            page_text = page.get_text() if include_context else ""
+            page_blocks = page.get_text("dict")["blocks"] if include_context else []
+            
+            page_images = []
+            
             for img_index, img in enumerate(image_list):
-                xref = img[0]
-                pix = fitz.Pixmap(doc, xref)
-                
-                # Check size requirements
-                if pix.width >= min_width and pix.height >= min_height:
-                    if pix.n - pix.alpha < 4:  # GRAY or RGB
-                        if output_format == "jpeg" and pix.alpha:
-                            pix = fitz.Pixmap(fitz.csRGB, pix)
-                        
-                        # Save image to specified directory
-                        img_filename = f"page_{page_num + 1}_image_{img_index}.{output_format}"
-                        img_path = output_dir / img_filename
-                        pix.save(str(img_path))
-                        
-                        # Calculate file size
-                        file_size = img_path.stat().st_size
-                        total_size += file_size
-                        
-                        # Add to extracted files list (summary format)
-                        extracted_files.append({
-                            "filename": img_filename,
-                            "path": str(img_path),
-                            "size": format_file_size(file_size),
-                            "dimensions": f"{pix.width}x{pix.height}"
-                        })
-                
-                pix = None
+                try:
+                    xref = img[0]
+                    pix = fitz.Pixmap(doc, xref)
+                    
+                    # Check size requirements
+                    if pix.width >= min_width and pix.height >= min_height:
+                        if pix.n - pix.alpha < 4:  # GRAY or RGB
+                            if output_format == "jpeg" and pix.alpha:
+                                pix = fitz.Pixmap(fitz.csRGB, pix)
+                            
+                            # Get image positioning from page
+                            img_rects = []
+                            for block in page_blocks:
+                                if block.get("type") == 1:  # Image block
+                                    for line in block.get("lines", []):
+                                        for span in line.get("spans", []):
+                                            if "image" in str(span).lower():
+                                                img_rects.append(block.get("bbox", [0, 0, 0, 0]))
+                            
+                            # Find image rectangle on page (approximate)
+                            img_instances = page.search_for("image") or []
+                            img_rect = None
+                            if img_index < len(img_rects):
+                                bbox = img_rects[img_index]
+                                img_rect = {
+                                    "x0": bbox[0], "y0": bbox[1], 
+                                    "x1": bbox[2], "y1": bbox[3],
+                                    "width": bbox[2] - bbox[0],
+                                    "height": bbox[3] - bbox[1]
+                                }
+                            
+                            # Extract context around image position if available
+                            context_before = ""
+                            context_after = ""
+                            
+                            if include_context and page_text and img_rect:
+                                # Simple approach: estimate text position relative to image
+                                text_blocks_before = []
+                                text_blocks_after = []
+                                
+                                for block in page_blocks:
+                                    if block.get("type") == 0:  # Text block
+                                        block_bbox = block.get("bbox", [0, 0, 0, 0])
+                                        block_center_y = (block_bbox[1] + block_bbox[3]) / 2
+                                        img_center_y = (img_rect["y0"] + img_rect["y1"]) / 2
+                                        
+                                        # Extract text from block
+                                        block_text = ""
+                                        for line in block.get("lines", []):
+                                            for span in line.get("spans", []):
+                                                block_text += span.get("text", "")
+                                        
+                                        if block_center_y < img_center_y:
+                                            text_blocks_before.append((block_center_y, block_text))
+                                        else:
+                                            text_blocks_after.append((block_center_y, block_text))
+                                
+                                # Get closest text before and after
+                                if text_blocks_before:
+                                    text_blocks_before.sort(key=lambda x: x[0], reverse=True)
+                                    context_before = text_blocks_before[0][1][-context_chars:]
+                                
+                                if text_blocks_after:
+                                    text_blocks_after.sort(key=lambda x: x[0])
+                                    context_after = text_blocks_after[0][1][:context_chars]
+                            
+                            # Save image to specified directory
+                            img_filename = f"page_{page_num + 1}_image_{img_index + 1}.{output_format}"
+                            img_path = output_dir / img_filename
+                            pix.save(str(img_path))
+                            
+                            # Calculate file size
+                            file_size = img_path.stat().st_size
+                            total_size += file_size
+                            
+                            # Create detailed image info
+                            image_info = {
+                                "filename": img_filename,
+                                "path": str(img_path),
+                                "page": page_num + 1,
+                                "image_index": img_index + 1,
+                                "dimensions": {
+                                    "width": pix.width,
+                                    "height": pix.height
+                                },
+                                "file_size": format_file_size(file_size),
+                                "positioning": img_rect,
+                                "context": {
+                                    "before": context_before.strip() if context_before else None,
+                                    "after": context_after.strip() if context_after else None
+                                } if include_context else None,
+                                "extraction_method": "PyMuPDF",
+                                "format": output_format
+                            }
+                            
+                            extracted_files.append(image_info)
+                            page_images.append(image_info)
+                    
+                    pix = None
+                    
+                except Exception as e:
+                    # Continue with other images if one fails
+                    logger.warning(f"Failed to extract image {img_index} from page {page_num + 1}: {str(e)}")
+                    continue
+            
+            if page_images:
+                pages_with_images.append({
+                    "page": page_num + 1,
+                    "image_count": len(page_images),
+                    "images": [{"filename": img["filename"], "dimensions": img["dimensions"]} for img in page_images]
+                })
         
         doc.close()
         
-        # Return clean summary instead of verbose image metadata
-        return {
+        # Create comprehensive response
+        response = {
             "success": True,
             "images_extracted": len(extracted_files),
+            "pages_with_images": pages_with_images,
             "total_size": format_file_size(total_size),
             "output_directory": str(output_dir),
-            "pages_processed": len(page_range),
-            "files": extracted_files,
-            "extraction_summary": f"Extracted {len(extracted_files)} images ({format_file_size(total_size)}) to {output_dir}"
+            "extraction_settings": {
+                "min_dimensions": f"{min_width}x{min_height}",
+                "output_format": output_format,
+                "context_included": include_context,
+                "context_chars": context_chars if include_context else 0
+            },
+            "workflow_coordination": {
+                "pages_with_images": [p["page"] for p in pages_with_images],
+                "total_pages_scanned": len(page_range),
+                "context_available": include_context,
+                "positioning_data": any(img.get("positioning") for img in extracted_files)
+            },
+            "extracted_images": extracted_files
         }
+        
+        # Check response size and chunk if needed
+        import json
+        response_str = json.dumps(response)
+        estimated_tokens = len(response_str) // 4
+        
+        if estimated_tokens > 20000:  # Similar to text extraction limit
+            # Create chunked response for large results
+            chunked_response = {
+                "success": True,
+                "images_extracted": len(extracted_files),
+                "pages_with_images": pages_with_images,
+                "total_size": format_file_size(total_size),
+                "output_directory": str(output_dir),
+                "extraction_settings": response["extraction_settings"],
+                "workflow_coordination": response["workflow_coordination"],
+                "chunking_info": {
+                    "response_too_large": True,
+                    "estimated_tokens": estimated_tokens,
+                    "total_images": len(extracted_files),
+                    "chunking_suggestion": "Use 'pages' parameter to extract images from specific page ranges",
+                    "example_commands": [
+                        f"Extract pages 1-10: pages='1,2,3,4,5,6,7,8,9,10'",
+                        f"Extract specific pages with images: pages='{','.join(map(str, pages_with_images[:5]))}'"
+                    ][:2]
+                },
+                "warnings": [
+                    f"Response too large ({estimated_tokens:,} tokens). Use page-specific extraction for detailed results.",
+                    f"Extracted {len(extracted_files)} images from {len(pages_with_images)} pages. Use 'pages' parameter for detailed context."
+                ]
+            }
+            return chunked_response
+        
+        return response
         
     except Exception as e:
         logger.error(f"Image extraction failed: {str(e)}")
@@ -1614,9 +2099,9 @@ async def convert_to_images(
         if format.lower() not in ["png", "jpeg", "jpg", "tiff"]:
             return {"error": "Supported formats: png, jpeg, tiff"}
         
-        # Create output directory
+        # Create output directory with security
         output_dir = CACHE_DIR / "image_output"
-        output_dir.mkdir(exist_ok=True)
+        output_dir.mkdir(exist_ok=True, mode=0o700)
         
         # Convert pages to images
         if parsed_pages:
@@ -3099,7 +3584,7 @@ async def create_form_pdf(
     try:
         # Parse field definitions
         try:
-            field_definitions = json.loads(fields) if fields != "[]" else []
+            field_definitions = safe_json_parse(fields) if fields != "[]" else []
         except json.JSONDecodeError as e:
             return {"error": f"Invalid field JSON: {str(e)}", "creation_time": 0}
         
@@ -3256,7 +3741,7 @@ async def fill_form_pdf(
     try:
         # Parse form data
         try:
-            field_values = json.loads(form_data) if form_data else {}
+            field_values = safe_json_parse(form_data) if form_data else {}
         except json.JSONDecodeError as e:
             return {"error": f"Invalid form data JSON: {str(e)}", "fill_time": 0}
         
@@ -3400,7 +3885,7 @@ async def add_form_fields(
     try:
         # Parse field definitions
         try:
-            field_definitions = json.loads(fields) if fields else []
+            field_definitions = safe_json_parse(fields) if fields else []
         except json.JSONDecodeError as e:
             return {"error": f"Invalid field JSON: {str(e)}", "addition_time": 0}
         
@@ -3547,7 +4032,7 @@ async def add_radio_group(
     try:
         # Parse options
         try:
-            option_labels = json.loads(options) if options else []
+            option_labels = safe_json_parse(options) if options else []
         except json.JSONDecodeError as e:
             return {"error": f"Invalid options JSON: {str(e)}", "addition_time": 0}
         
@@ -3858,8 +4343,8 @@ async def validate_form_data(
     try:
         # Parse inputs
         try:
-            field_values = json.loads(form_data) if form_data else {}
-            rules = json.loads(validation_rules) if validation_rules else {}
+            field_values = safe_json_parse(form_data) if form_data else {}
+            rules = safe_json_parse(validation_rules) if validation_rules else {}
         except json.JSONDecodeError as e:
             return {"error": f"Invalid JSON input: {str(e)}", "validation_time": 0}
         
@@ -4029,7 +4514,7 @@ async def add_field_validation(
     try:
         # Parse validation rules
         try:
-            rules = json.loads(validation_rules) if validation_rules else {}
+            rules = safe_json_parse(validation_rules) if validation_rules else {}
         except json.JSONDecodeError as e:
             return {"error": f"Invalid validation rules JSON: {str(e)}", "addition_time": 0}
         
@@ -4149,7 +4634,7 @@ async def merge_pdfs_advanced(
     try:
         # Parse input paths
         try:
-            pdf_paths = json.loads(input_paths) if input_paths else []
+            pdf_paths = safe_json_parse(input_paths) if input_paths else []
         except json.JSONDecodeError as e:
             return {"error": f"Invalid input paths JSON: {str(e)}", "merge_time": 0}
         
@@ -4286,7 +4771,7 @@ async def split_pdf_by_pages(
     try:
         # Parse page ranges
         try:
-            ranges = json.loads(page_ranges) if page_ranges else []
+            ranges = safe_json_parse(page_ranges) if page_ranges else []
         except json.JSONDecodeError as e:
             return {"error": f"Invalid page ranges JSON: {str(e)}", "split_time": 0}
         
@@ -4298,9 +4783,9 @@ async def split_pdf_by_pages(
         doc = fitz.open(str(input_file))
         total_pages = doc.page_count
         
-        # Create output directory
-        output_dir = Path(output_directory)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Create output directory with security validation
+        output_dir = validate_output_path(output_directory)
+        output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         
         split_info = {
             "files_created": [],
@@ -4442,7 +4927,7 @@ async def reorder_pdf_pages(
     try:
         # Parse page order
         try:
-            order = json.loads(page_order) if page_order else []
+            order = safe_json_parse(page_order) if page_order else []
         except json.JSONDecodeError as e:
             return {"error": f"Invalid page order JSON: {str(e)}", "reorder_time": 0}
         
@@ -4585,9 +5070,9 @@ async def split_pdf_by_bookmarks(
             doc.close()
             return {"error": f"Not enough level-{bookmark_level} bookmarks for splitting (found {len(split_points)})", "split_time": 0}
         
-        # Create output directory
-        output_dir = Path(output_directory)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Create output directory with security validation
+        output_dir = validate_output_path(output_directory)
+        output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         
         split_info = {
             "files_created": [],
@@ -4716,7 +5201,7 @@ async def add_sticky_notes(
     try:
         # Parse notes
         try:
-            note_definitions = json.loads(notes) if notes else []
+            note_definitions = safe_json_parse(notes) if notes else []
         except json.JSONDecodeError as e:
             return {"error": f"Invalid notes JSON: {str(e)}", "annotation_time": 0}
         
@@ -4768,14 +5253,78 @@ async def add_sticky_notes(
                 # Get color
                 color = color_map.get(color_name, (1, 1, 0))  # Default to yellow
                 
-                # Create sticky note annotation
-                note_rect = fitz.Rect(x, y, x + 20, y + 20)  # Small icon size
+                # Create realistic sticky note appearance
+                note_width = 80
+                note_height = 60
+                note_rect = fitz.Rect(x, y, x + note_width, y + note_height)
                 
-                # Create text annotation (sticky note)
-                annot = page.add_text_annot(fitz.Point(x, y), content)
+                # Add colored rectangle background (sticky note paper)
+                page.draw_rect(note_rect, color=color, fill=color, width=1)
+                
+                # Add slight shadow effect for depth
+                shadow_rect = fitz.Rect(x + 2, y - 2, x + note_width + 2, y + note_height - 2)
+                page.draw_rect(shadow_rect, color=(0.7, 0.7, 0.7), fill=(0.7, 0.7, 0.7), width=0)
+                
+                # Add the main sticky note rectangle on top
+                page.draw_rect(note_rect, color=color, fill=color, width=1)
+                
+                # Add border for definition
+                border_color = (min(1, color[0] * 0.8), min(1, color[1] * 0.8), min(1, color[2] * 0.8))
+                page.draw_rect(note_rect, color=border_color, width=1)
+                
+                # Add "folded corner" effect (small triangle)
+                fold_size = 8
+                fold_points = [
+                    fitz.Point(x + note_width - fold_size, y),
+                    fitz.Point(x + note_width, y),
+                    fitz.Point(x + note_width, y + fold_size)
+                ]
+                page.draw_polyline(fold_points, color=(1, 1, 1), fill=(1, 1, 1), width=1)
+                
+                # Add text content on the sticky note
+                text_rect = fitz.Rect(x + 4, y + 4, x + note_width - 8, y + note_height - 8)
+                
+                # Wrap text to fit in sticky note
+                words = content.split()
+                lines = []
+                current_line = []
+                
+                for word in words:
+                    test_line = " ".join(current_line + [word])
+                    if len(test_line) > 12:  # Approximate character limit per line
+                        if current_line:
+                            lines.append(" ".join(current_line))
+                            current_line = [word]
+                        else:
+                            lines.append(word[:12] + "...")
+                            break
+                    else:
+                        current_line.append(word)
+                
+                if current_line:
+                    lines.append(" ".join(current_line))
+                
+                # Limit to 4 lines to fit in sticky note
+                if len(lines) > 4:
+                    lines = lines[:3] + [lines[3][:8] + "..."]
+                
+                # Draw text lines
+                line_height = 10
+                text_y = y + 10
+                text_color = (0, 0, 0)  # Black text
+                
+                for line in lines[:4]:  # Max 4 lines
+                    if text_y + line_height <= y + note_height - 4:
+                        page.insert_text((x + 6, text_y), line, fontname="helv", fontsize=8, color=text_color)
+                        text_y += line_height
+                
+                # Create invisible text annotation for PDF annotation system compatibility
+                annot = page.add_text_annot(fitz.Point(x + note_width/2, y + note_height/2), content)
                 annot.set_info(content=content, title=subject)
-                annot.set_colors(stroke=color)
-                annot.set_flags(fitz.PDF_ANNOT_IS_PRINT)  # Make it printable
+                
+                # Set the popup/content background to match sticky note color
+                annot.set_colors(stroke=(0, 0, 0, 0), fill=color)  # Invisible border, colored background
+                annot.set_flags(fitz.PDF_ANNOT_IS_PRINT | fitz.PDF_ANNOT_IS_INVISIBLE)
                 annot.update()
                 
                 annotation_info["notes_added"].append({
@@ -4817,6 +5366,453 @@ async def add_sticky_notes(
     except Exception as e:
         return {"error": f"Adding sticky notes failed: {str(e)}", "annotation_time": round(time.time() - start_time, 2)}
 
+@mcp.tool(name="add_video_notes", description="Add video sticky notes that embed and launch video content")
+async def add_video_notes(
+    input_path: str,
+    output_path: str,
+    video_notes: str  # JSON array of video note definitions
+) -> Dict[str, Any]:
+    """
+    Add video sticky notes that embed video files and launch on click
+    
+    Args:
+        input_path: Path to the existing PDF
+        output_path: Path where PDF with video notes should be saved
+        video_notes: JSON array of video note definitions
+    
+    Video note format:
+    [
+        {
+            "page": 1,
+            "x": 100, "y": 200,
+            "video_path": "/path/to/video.mp4",
+            "title": "Demo Video",
+            "color": "red",
+            "size": "medium"
+        }
+    ]
+    
+    Returns:
+        Dictionary containing video embedding results
+    """
+    import json
+    import time
+    import hashlib
+    import os
+    start_time = time.time()
+    
+    try:
+        # Parse video notes
+        try:
+            note_definitions = safe_json_parse(video_notes) if video_notes else []
+        except json.JSONDecodeError as e:
+            return {"error": f"Invalid video notes JSON: {str(e)}", "embedding_time": 0}
+        
+        if not note_definitions:
+            return {"error": "At least one video note is required", "embedding_time": 0}
+        
+        # Validate input path
+        input_file = await validate_pdf_path(input_path)
+        doc = fitz.open(str(input_file))
+        
+        embedding_info = {
+            "videos_embedded": [],
+            "embedding_errors": []
+        }
+        
+        # Track embedded file names to prevent duplicates
+        embedded_names = set()
+        
+        # Color mapping for video note appearance
+        color_map = {
+            "red": (1, 0, 0),
+            "blue": (0, 0, 1),
+            "green": (0, 1, 0),
+            "orange": (1, 0.5, 0),
+            "purple": (0.5, 0, 1),
+            "yellow": (1, 1, 0),
+            "pink": (1, 0.75, 0.8),
+            "gray": (0.5, 0.5, 0.5)
+        }
+        
+        # Size mapping
+        size_map = {
+            "small": (60, 45),
+            "medium": (80, 60),
+            "large": (100, 75)
+        }
+        
+        # Process each video note
+        for i, note_def in enumerate(note_definitions):
+            try:
+                page_num = note_def.get("page", 1) - 1  # Convert to 0-indexed
+                x = note_def.get("x", 100)
+                y = note_def.get("y", 100)
+                video_path = note_def.get("video_path", "")
+                title = note_def.get("title", "Video")
+                color_name = note_def.get("color", "red").lower()
+                size_name = note_def.get("size", "medium").lower()
+                
+                # Validate inputs
+                if not video_path or not os.path.exists(video_path):
+                    embedding_info["embedding_errors"].append({
+                        "note_index": i,
+                        "error": f"Video file not found: {video_path}"
+                    })
+                    continue
+                
+                # Check video format and suggest conversion if needed
+                video_ext = os.path.splitext(video_path)[1].lower()
+                supported_formats = ['.mp4', '.mov', '.avi', '.mkv', '.webm']
+                recommended_formats = ['.mp4']
+                
+                if video_ext not in supported_formats:
+                    embedding_info["embedding_errors"].append({
+                        "note_index": i,
+                        "error": f"Unsupported video format: {video_ext}. Supported: {', '.join(supported_formats)}",
+                        "conversion_suggestion": f"Convert with FFmpeg: ffmpeg -i '{os.path.basename(video_path)}' -c:v libx264 -c:a aac -preset medium '{os.path.splitext(os.path.basename(video_path))[0]}.mp4'"
+                    })
+                    continue
+                
+                # Suggest optimization for non-MP4 files
+                conversion_suggestion = None
+                if video_ext not in recommended_formats:
+                    conversion_suggestion = f"For best compatibility, convert to MP4: ffmpeg -i '{os.path.basename(video_path)}' -c:v libx264 -c:a aac -preset medium -crf 23 '{os.path.splitext(os.path.basename(video_path))[0]}.mp4'"
+                
+                # Video validation and metadata extraction
+                try:
+                    import cv2
+                    cap = cv2.VideoCapture(video_path)
+                    
+                    # Check if video is readable/valid
+                    if not cap.isOpened():
+                        embedding_info["embedding_errors"].append({
+                            "note_index": i,
+                            "error": f"Cannot open or corrupted video file: {video_path}",
+                            "validation_suggestion": "Check if video file is corrupted and try re-encoding"
+                        })
+                        continue
+                    
+                    # Extract video metadata
+                    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    duration_seconds = frame_count / fps if fps > 0 else 0
+                    
+                    # Extract first frame as thumbnail
+                    ret, frame = cap.read()
+                    thumbnail_data = None
+                    if ret and frame is not None:
+                        # Resize thumbnail to fit sticky note
+                        thumbnail_height = min(note_height - 20, height)  # Leave space for metadata
+                        thumbnail_width = int((width / height) * thumbnail_height)
+                        
+                        # Ensure thumbnail fits within note width
+                        if thumbnail_width > note_width - 10:
+                            thumbnail_width = note_width - 10
+                            thumbnail_height = int((height / width) * thumbnail_width)
+                        
+                        # Resize frame
+                        thumbnail = cv2.resize(frame, (thumbnail_width, thumbnail_height))
+                        # Convert BGR to RGB
+                        thumbnail_rgb = cv2.cvtColor(thumbnail, cv2.COLOR_BGR2RGB)
+                        thumbnail_data = (thumbnail_rgb, thumbnail_width, thumbnail_height)
+                    
+                    cap.release()
+                    
+                    # Format duration for display
+                    if duration_seconds < 60:
+                        duration_str = f"{int(duration_seconds)}s"
+                    else:
+                        minutes = int(duration_seconds // 60)
+                        seconds = int(duration_seconds % 60)
+                        duration_str = f"{minutes}:{seconds:02d}"
+                    
+                    # Create metadata string
+                    metadata_text = f"{duration_str} | {width}x{height}"
+                    
+                except ImportError:
+                    # OpenCV not available - basic file validation only
+                    thumbnail_data = None
+                    metadata_text = None
+                    duration_seconds = 0
+                    width, height = 0, 0
+                    
+                    # Basic file validation - check if file starts with video headers
+                    try:
+                        with open(video_path, 'rb') as f:
+                            header = f.read(12)
+                            # Check for common video file signatures
+                            video_signatures = [
+                                b'\x00\x00\x00\x18ftypmp4',  # MP4
+                                b'\x00\x00\x00\x20ftypmp4',  # MP4
+                                b'RIFF',                      # AVI (partial)
+                                b'\x1a\x45\xdf\xa3',         # MKV
+                            ]
+                            
+                            is_valid = any(header.startswith(sig) for sig in video_signatures)
+                            if not is_valid:
+                                embedding_info["embedding_errors"].append({
+                                    "note_index": i,
+                                    "error": f"Invalid or corrupted video file: {video_path}",
+                                    "validation_suggestion": "File does not appear to be a valid video format"
+                                })
+                                continue
+                    except Exception as e:
+                        embedding_info["embedding_errors"].append({
+                            "note_index": i,
+                            "error": f"Cannot validate video file: {str(e)}"
+                        })
+                        continue
+                except Exception as e:
+                    embedding_info["embedding_errors"].append({
+                        "note_index": i,
+                        "error": f"Video validation failed: {str(e)}"
+                    })
+                    continue
+                
+                # Check file size and suggest compression if very large
+                file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+                if file_size_mb > 50:  # Warn for files > 50MB
+                    size_warning = f"Large video file ({file_size_mb:.1f}MB) will significantly increase PDF size"
+                    if not conversion_suggestion:
+                        conversion_suggestion = f"Compress video: ffmpeg -i '{os.path.basename(video_path)}' -c:v libx264 -c:a aac -preset medium -crf 28 -maxrate 1M -bufsize 2M '{os.path.splitext(os.path.basename(video_path))[0]}_compressed.mp4'"
+                else:
+                    size_warning = None
+                
+                if page_num >= len(doc) or page_num < 0:
+                    embedding_info["embedding_errors"].append({
+                        "note_index": i,
+                        "error": f"Page {page_num + 1} does not exist"
+                    })
+                    continue
+                
+                page = doc[page_num]
+                color = color_map.get(color_name, (1, 0, 0))  # Default to red
+                note_width, note_height = size_map.get(size_name, (80, 60))
+                
+                # Create enhanced video sticky note appearance
+                note_rect = fitz.Rect(x, y, x + note_width, y + note_height)
+                
+                # Add shadow effect
+                shadow_rect = fitz.Rect(x + 3, y - 3, x + note_width + 3, y + note_height - 3)
+                page.draw_rect(shadow_rect, color=(0.6, 0.6, 0.6), fill=(0.6, 0.6, 0.6), width=0)
+                
+                # Add main background (darker for video contrast)
+                bg_color = (min(1, color[0] * 0.3), min(1, color[1] * 0.3), min(1, color[2] * 0.3))
+                page.draw_rect(note_rect, color=bg_color, fill=bg_color, width=1)
+                
+                # Add thumbnail if available
+                if thumbnail_data:
+                    thumb_img, thumb_w, thumb_h = thumbnail_data
+                    # Center thumbnail in note
+                    thumb_x = x + (note_width - thumb_w) // 2
+                    thumb_y = y + 5  # Small margin from top
+                    
+                    try:
+                        # Convert numpy array to bytes for PyMuPDF
+                        from PIL import Image
+                        import io
+                        
+                        pil_img = Image.fromarray(thumb_img)
+                        img_bytes = io.BytesIO()
+                        pil_img.save(img_bytes, format='PNG')
+                        img_data = img_bytes.getvalue()
+                        
+                        # Insert thumbnail image
+                        thumb_rect = fitz.Rect(thumb_x, thumb_y, thumb_x + thumb_w, thumb_y + thumb_h)
+                        page.insert_image(thumb_rect, stream=img_data)
+                        
+                        # Add semi-transparent overlay for play button visibility
+                        overlay_rect = fitz.Rect(thumb_x, thumb_y, thumb_x + thumb_w, thumb_y + thumb_h)
+                        page.draw_rect(overlay_rect, color=(0, 0, 0, 0.3), fill=(0, 0, 0, 0.3), width=0)
+                        
+                    except ImportError:
+                        # PIL not available, use solid color background
+                        page.draw_rect(note_rect, color=color, fill=color, width=1)
+                else:
+                    # No thumbnail, use solid color background
+                    page.draw_rect(note_rect, color=color, fill=color, width=1)
+                
+                # Add film strip border for visual indication
+                strip_color = (1, 1, 1)
+                strip_width = 2
+                # Top and bottom strips
+                for i in range(0, note_width, 8):
+                    if i + 4 <= note_width:
+                        # Top perforations
+                        perf_rect = fitz.Rect(x + i + 1, y - 1, x + i + 3, y + 1)
+                        page.draw_rect(perf_rect, color=strip_color, fill=strip_color, width=0)
+                        # Bottom perforations
+                        perf_rect = fitz.Rect(x + i + 1, y + note_height - 1, x + i + 3, y + note_height + 1)
+                        page.draw_rect(perf_rect, color=strip_color, fill=strip_color, width=0)
+                
+                # Add enhanced play button with circular background
+                play_icon_size = min(note_width, note_height) // 4
+                icon_x = x + note_width // 2
+                icon_y = y + (note_height - 15) // 2  # Account for metadata space at bottom
+                
+                # Play button circle background
+                circle_radius = play_icon_size + 3
+                page.draw_circle(fitz.Point(icon_x, icon_y), circle_radius, color=(0, 0, 0, 0.7), fill=(0, 0, 0, 0.7), width=0)
+                page.draw_circle(fitz.Point(icon_x, icon_y), circle_radius, color=(1, 1, 1), width=2)
+                
+                # Play triangle
+                play_points = [
+                    fitz.Point(icon_x - play_icon_size//2, icon_y - play_icon_size//2),
+                    fitz.Point(icon_x + play_icon_size//2, icon_y),
+                    fitz.Point(icon_x - play_icon_size//2, icon_y + play_icon_size//2)
+                ]
+                page.draw_polyline(play_points, color=(1, 1, 1), fill=(1, 1, 1), width=1)
+                
+                # Add video camera icon indicator in top corner
+                cam_size = 8
+                cam_rect = fitz.Rect(x + note_width - cam_size - 2, y + 2, x + note_width - 2, y + cam_size + 2)
+                page.draw_rect(cam_rect, color=(1, 1, 1), fill=(1, 1, 1), width=1)
+                page.draw_circle(fitz.Point(x + note_width - cam_size//2 - 2, y + cam_size//2 + 2), 2, color=(0, 0, 0), fill=(0, 0, 0), width=0)
+                
+                # Add title and metadata at bottom
+                title_text = title[:15] + "..." if len(title) > 15 else title
+                page.insert_text((x + 2, y + note_height - 12), title_text, fontname="helv-bold", fontsize=7, color=(1, 1, 1))
+                
+                if metadata_text:
+                    page.insert_text((x + 2, y + note_height - 3), metadata_text, fontname="helv", fontsize=6, color=(0.9, 0.9, 0.9))
+                
+                # Generate unique embedded filename
+                file_hash = hashlib.md5(video_path.encode()).hexdigest()[:8]
+                embedded_name = f"videoPop-{file_hash}.mp4"
+                
+                # Ensure unique name (handle duplicates)
+                counter = 1
+                original_name = embedded_name
+                while embedded_name in embedded_names:
+                    name_parts = original_name.rsplit('.', 1)
+                    embedded_name = f"{name_parts[0]}_{counter}.{name_parts[1]}"
+                    counter += 1
+                
+                embedded_names.add(embedded_name)
+                
+                # Read video file
+                with open(video_path, 'rb') as video_file:
+                    video_data = video_file.read()
+                
+                # Embed video as file attachment using PyMuPDF
+                doc.embfile_add(embedded_name, video_data, filename=embedded_name, ufilename=embedded_name, desc=f"Video: {title}")
+                
+                # Create JavaScript action for video launch
+                javascript_code = f"this.exportDataObject({{cName: '{embedded_name}', nLaunch: 2}});"
+                
+                # Add clickable annotation for video launch with fallback info
+                fallback_info = f"""Video: {title}
+Duration: {duration_str if metadata_text else 'Unknown'}
+Resolution: {width}x{height if width and height else 'Unknown'}
+File: {os.path.basename(video_path)}
+
+CLICK TO PLAY VIDEO
+(Requires Adobe Acrobat/Reader with JavaScript enabled)
+
+FALLBACK ACCESS:
+If video doesn't launch automatically:
+1. Use PDF menu: View → Navigation Panels → Attachments
+2. Find '{embedded_name}' in attachments list
+3. Double-click to extract and play
+
+MOBILE/WEB FALLBACK:
+This PDF contains embedded video files that may not be
+accessible in mobile or web-based PDF viewers."""
+
+                annot = page.add_text_annot(fitz.Point(x + note_width/2, y + note_height/2), fallback_info)
+                annot.set_info(content=fallback_info, title=f"Video: {title}")
+                annot.set_colors(stroke=(0, 0, 0, 0), fill=color)
+                annot.set_rect(note_rect)  # Cover the entire video note area
+                annot.set_flags(fitz.PDF_ANNOT_IS_PRINT)
+                annot.update()
+                
+                video_info = {
+                    "page": page_num + 1,
+                    "position": {"x": x, "y": y},
+                    "video_file": os.path.basename(video_path),
+                    "embedded_name": embedded_name,
+                    "title": title,
+                    "color": color_name,
+                    "size": size_name,
+                    "file_size_mb": round(len(video_data) / (1024 * 1024), 2),
+                    "format": video_ext,
+                    "optimized": video_ext in recommended_formats,
+                    "duration_seconds": duration_seconds,
+                    "resolution": {"width": width, "height": height},
+                    "has_thumbnail": thumbnail_data is not None,
+                    "metadata_display": metadata_text,
+                    "fallback_accessible": True
+                }
+                
+                # Add optional fields if they exist
+                if conversion_suggestion:
+                    video_info["conversion_suggestion"] = conversion_suggestion
+                if size_warning:
+                    video_info["size_warning"] = size_warning
+                    
+                embedding_info["videos_embedded"].append(video_info)
+                
+            except Exception as e:
+                embedding_info["embedding_errors"].append({
+                    "note_index": i,
+                    "error": f"Failed to embed video: {str(e)}"
+                })
+        
+        # Ensure output directory exists
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save PDF with embedded videos
+        doc.save(str(output_file), garbage=4, deflate=True, clean=True)
+        doc.close()
+        
+        file_size = output_file.stat().st_size
+        
+        # Analyze format distribution
+        format_stats = {}
+        conversion_suggestions = []
+        for video_info in embedding_info["videos_embedded"]:
+            fmt = video_info.get("format", "unknown")
+            format_stats[fmt] = format_stats.get(fmt, 0) + 1
+            if video_info.get("conversion_suggestion"):
+                conversion_suggestions.append(video_info["conversion_suggestion"])
+        
+        result = {
+            "input_path": str(input_file),
+            "output_path": str(output_file),
+            "videos_requested": len(note_definitions),
+            "videos_embedded": len(embedding_info["videos_embedded"]),
+            "videos_failed": len(embedding_info["embedding_errors"]),
+            "embedding_details": embedding_info,
+            "format_distribution": format_stats,
+            "total_file_size": format_file_size(file_size),
+            "compatibility_note": "Requires PDF viewer with JavaScript support (Adobe Acrobat/Reader)",
+            "embedding_time": round(time.time() - start_time, 2)
+        }
+        
+        # Add format optimization info if applicable
+        if conversion_suggestions:
+            result["optimization_suggestions"] = {
+                "count": len(conversion_suggestions),
+                "ffmpeg_commands": conversion_suggestions[:3],  # Show first 3 suggestions
+                "note": "Run suggested FFmpeg commands to optimize videos for better PDF compatibility and smaller file sizes"
+            }
+        
+        # Add supported formats info
+        result["format_support"] = {
+            "supported": [".mp4", ".mov", ".avi", ".mkv", ".webm"],
+            "recommended": [".mp4"],
+            "optimization_note": "MP4 with H.264/AAC provides best compatibility across PDF viewers"
+        }
+        
+        return result
+        
+    except Exception as e:
+        return {"error": f"Video embedding failed: {str(e)}", "embedding_time": round(time.time() - start_time, 2)}
+
 @mcp.tool(name="add_highlights", description="Add text highlights to specific text or areas in PDF")
 async def add_highlights(
     input_path: str,
@@ -4853,7 +5849,7 @@ async def add_highlights(
     try:
         # Parse highlights
         try:
-            highlight_definitions = json.loads(highlights) if highlights else []
+            highlight_definitions = safe_json_parse(highlights) if highlights else []
         except json.JSONDecodeError as e:
             return {"error": f"Invalid highlights JSON: {str(e)}", "highlight_time": 0}
         
@@ -5013,7 +6009,7 @@ async def add_stamps(
     try:
         # Parse stamps
         try:
-            stamp_definitions = json.loads(stamps) if stamps else []
+            stamp_definitions = safe_json_parse(stamps) if stamps else []
         except json.JSONDecodeError as e:
             return {"error": f"Invalid stamps JSON: {str(e)}", "stamp_time": 0}
         

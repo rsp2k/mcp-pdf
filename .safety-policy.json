@@ -1,0 +1,21 @@
+{
+    "security": {
+        "ignore-vulnerabilities": [],
+        "ignore-severity-rules": [],
+        "continue-on-vulnerability-error": false
+    },
+    "alert": {
+        "ignore-severity-rules": {
+            "cvss-gte": [
+                {
+                    "vulnerability-severity-threshold": 7.0,
+                    "rationale": "Only alert on HIGH and CRITICAL vulnerabilities (CVSS >= 7.0)"
+                }
+            ]
+        }
+    },
+    "report": {
+        "dependency-vulnerabilities": true,
+        "other": true
+    }
+}
