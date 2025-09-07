@@ -1032,7 +1032,7 @@ wheels = [
 
 [[package]]
 name = "mcp-pdf"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "camelot-py", extra = ["cv"] },
@@ -1073,6 +1073,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "reportlab" },
     { name = "safety" },
+    { name = "twine" },
 ]
 
 [package.metadata]
@@ -1112,6 +1113,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.2.1" },
     { name = "reportlab", specifier = ">=4.4.3" },
     { name = "safety", specifier = ">=3.2.11" },
+    { name = "twine", specifier = ">=6.1.0" },
 ]
 
 [[package]]

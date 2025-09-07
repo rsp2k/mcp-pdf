@@ -1,8 +1,8 @@
 [project]
 name = "mcp-pdf"
-version = "1.0.0"
+version = "1.0.1"
 description = "Secure FastMCP server for comprehensive PDF processing - text extraction, OCR, table extraction, forms, annotations, and more"
-authors = [{name = "MCP Team", email = "team@fastmcp.org"}]
+authors = [{name = "Ryan Malloy", email = "ryan@malloys.us"}]
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -98,4 +98,5 @@ dev = [
     "pytest-cov>=6.2.1",
     "reportlab>=4.4.3",
     "safety>=3.2.11",
+    "twine>=6.1.0",
 ]

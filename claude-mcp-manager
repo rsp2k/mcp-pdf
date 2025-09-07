@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""
+Claude MCP Manager - Easy management of MCP servers in Claude Desktop
+Usage: claude mcp add <name> <command> [args...]
+"""
+
+import json
+import sys
+import os
+from pathlib import Path
+import shutil
+import subprocess
+from typing import Dict, List, Any, Optional
+
+
+class ClaudeMCPManager:
+    def __init__(self):
+        self.config_path = Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+        self.config_backup_dir = Path.home() / ".config" / "Claude" / "backups"
+        self.config_backup_dir.mkdir(exist_ok=True)
+        
+    def load_config(self) -> Dict[str, Any]:
+        """Load Claude Desktop configuration"""
+        if not self.config_path.exists():
+            return {"mcpServers": {}, "globalShortcut": ""}
+        
+        try:
+            with open(self.config_path) as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"❌ Error parsing config: {e}")
+            sys.exit(1)
+    
+    def save_config(self, config: Dict[str, Any]):
+        """Save configuration with backup"""
+        # Create backup
+        if self.config_path.exists():
+            backup_name = f"claude_desktop_config_backup_{int(__import__('time').time())}.json"
+            backup_path = self.config_backup_dir / backup_name
+            shutil.copy2(self.config_path, backup_path)
+            print(f"📁 Config backed up to: {backup_path}")
+        
+        # Save new config
+        with open(self.config_path, 'w') as f:
+            json.dump(config, f, indent=2)
+        print(f"✅ Configuration saved to: {self.config_path}")
+    
+    def add_server(self, name: str, command: str, args: List[str], env: Optional[Dict[str, str]] = None, directory: Optional[str] = None):
+        """Add a new MCP server"""
+        config = self.load_config()
+        
+        if name in config["mcpServers"]:
+            print(f"⚠️  Server '{name}' already exists. Use 'claude mcp update' to modify.")
+            return False
+        
+        server_config = {
+            "command": command,
+            "args": args
+        }
+        
+        if env:
+            server_config["env"] = env
+            
+        if directory:
+            server_config["cwd"] = directory
+        
+        config["mcpServers"][name] = server_config
+        self.save_config(config)
+        print(f"🚀 Added MCP server: {name}")
+        return True
+    
+    def remove_server(self, name: str):
+        """Remove an MCP server"""
+        config = self.load_config()
+        
+        if name not in config["mcpServers"]:
+            print(f"❌ Server '{name}' not found")
+            return False
+        
+        del config["mcpServers"][name]
+        self.save_config(config)
+        print(f"🗑️  Removed MCP server: {name}")
+        return True
+    
+    def list_servers(self):
+        """List all configured MCP servers"""
+        config = self.load_config()
+        servers = config.get("mcpServers", {})
+        
+        if not servers:
+            print("📭 No MCP servers configured")
+            return
+        
+        print("📋 Configured MCP servers:")
+        print("=" * 50)
+        
+        for name, server_config in servers.items():
+            command = server_config.get("command", "")
+            args = server_config.get("args", [])
+            env = server_config.get("env", {})
+            cwd = server_config.get("cwd", "")
+            
+            print(f"🔧 {name}")
+            print(f"   Command: {command}")
+            if args:
+                print(f"   Args: {' '.join(args)}")
+            if env:
+                print(f"   Environment: {dict(list(env.items())[:3])}{'...' if len(env) > 3 else ''}")
+            if cwd:
+                print(f"   Directory: {cwd}")
+            print()
+    
+    def add_mcp_pdf_local(self, directory: str):
+        """Add MCP PDF from local development directory"""
+        abs_dir = os.path.abspath(directory)
+        
+        if not os.path.exists(abs_dir):
+            print(f"❌ Directory not found: {abs_dir}")
+            return False
+        
+        # Check if it's a valid MCP PDF directory
+        required_files = ["pyproject.toml", "src/mcp_pdf/server.py"]
+        for file in required_files:
+            if not os.path.exists(os.path.join(abs_dir, file)):
+                print(f"❌ Not a valid MCP PDF directory (missing: {file})")
+                return False
+        
+        return self.add_server(
+            name="mcp-pdf-local",
+            command="uv",
+            args=[
+                "--directory", abs_dir,
+                "run", "mcp-pdf"
+            ],
+            env={"PDF_TEMP_DIR": "/tmp/mcp-pdf-processing"},
+            directory=abs_dir
+        )
+    
+    def add_mcp_pdf_pip(self):
+        """Add MCP PDF from pip installation"""
+        return self.add_server(
+            name="mcp-pdf",
+            command="mcp-pdf",
+            args=[],
+            env={"PDF_TEMP_DIR": "/tmp/mcp-pdf-processing"}
+        )
+
+
+def print_usage():
+    """Print usage information"""
+    print("""
+🔧 Claude MCP Manager - Easy MCP server management
+
+USAGE:
+    claude mcp add <name> <command> [args...]     # Add generic MCP server
+    claude mcp add-local <directory>              # Add MCP PDF from local dev
+    claude mcp add-pip                            # Add MCP PDF from pip
+    claude mcp remove <name>                      # Remove MCP server
+    claude mcp list                               # List all servers
+    claude mcp help                               # Show this help
+
+EXAMPLES:
+    # Add MCP PDF from local development
+    claude mcp add-local /home/user/mcp-pdf
+    
+    # Add MCP PDF from pip (after pip install mcp-pdf)  
+    claude mcp add-pip
+    
+    # Add generic MCP server
+    claude mcp add memory npx -y @modelcontextprotocol/server-memory
+    
+    # Add server with environment variables
+    claude mcp add github docker run -i --rm -e GITHUB_TOKEN ghcr.io/github/github-mcp-server
+    
+    # Remove a server
+    claude mcp remove mcp-pdf-local
+    
+    # List all configured servers
+    claude mcp list
+
+NOTES:
+    • Configuration saved to: ~/.config/Claude/claude_desktop_config.json
+    • Automatic backups created before changes
+    • Restart Claude Desktop after adding/removing servers
+    """)
+
+
+def main():
+    if len(sys.argv) < 2:
+        print_usage()
+        sys.exit(1)
+    
+    manager = ClaudeMCPManager()
+    command = sys.argv[1].lower()
+    
+    if command == "add":
+        if len(sys.argv) < 4:
+            print("❌ Usage: claude mcp add <name> <command> [args...]")
+            sys.exit(1)
+        
+        name = sys.argv[2]
+        command = sys.argv[3]
+        args = sys.argv[4:] if len(sys.argv) > 4 else []
+        
+        manager.add_server(name, command, args)
+    
+    elif command == "add-local":
+        if len(sys.argv) != 3:
+            print("❌ Usage: claude mcp add-local <directory>")
+            sys.exit(1)
+        
+        directory = sys.argv[2]
+        manager.add_mcp_pdf_local(directory)
+    
+    elif command == "add-pip":
+        manager.add_mcp_pdf_pip()
+    
+    elif command == "remove":
+        if len(sys.argv) != 3:
+            print("❌ Usage: claude mcp remove <name>")
+            sys.exit(1)
+        
+        name = sys.argv[2]
+        manager.remove_server(name)
+    
+    elif command == "list":
+        manager.list_servers()
+    
+    elif command in ["help", "--help", "-h"]:
+        print_usage()
+    
+    else:
+        print(f"❌ Unknown command: {command}")
+        print_usage()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -547,6 +547,9 @@ async def extract_text(
         }
         doc.close()
         
+        # Enforce MCP hard limit regardless of user max_tokens setting
+        effective_max_tokens = min(max_tokens, 24000)  # Stay safely under MCP's 25000 limit
+        
         # Early chunking decision based on size analysis
         should_chunk_early = (
             total_pages > 50 or  # Large page count
@@ -591,9 +594,6 @@ async def extract_text(
         
         # Estimate token count (rough approximation: 1 token ≈ 4 characters)
         estimated_tokens = len(text) // 4
-        
-        # Enforce MCP hard limit regardless of user max_tokens setting
-        effective_max_tokens = min(max_tokens, 24000)  # Stay safely under MCP's 25000 limit
         
         # Handle large responses with intelligent chunking
         if estimated_tokens > effective_max_tokens:
