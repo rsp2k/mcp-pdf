@@ -134,11 +134,19 @@ Critical system dependencies:
 Environment variables (optional):
 - `TESSDATA_PREFIX`: Tesseract language data location
 - `PDF_TEMP_DIR`: Temporary file processing directory (defaults to `/tmp/mcp-pdf-processing`)
+- `MCP_PDF_ALLOWED_PATHS`: Colon-separated list of allowed output directories (e.g., `/tmp:/home/user/documents:/var/output`)
+  - If unset: Allows writes to any directory with security warnings
+  - If set: Restricts file outputs to specified directories only
+  - **SECURITY NOTE**: This is "security theater" - real protection requires OS-level permissions and process isolation
 - `DEBUG`: Enable debug logging
 
 ### Security Features
 
-The server implements comprehensive security hardening:
+**🔒 "TRUST NO ONE" Security Philosophy**
+
+This server implements defense-in-depth, but remember: **application-level security is "theater" - real security comes from the operating system and deployment practices.**
+
+**Application-Level Protections (Security Theater):**
 
 **Input Validation:**
 - File size limits: 100MB for PDFs, 50MB for images
@@ -166,6 +174,18 @@ The server implements comprehensive security hardening:
 - Integrated `safety` and `pip-audit` tools for dependency scanning
 - GitHub Actions workflow for continuous security monitoring
 - Daily automated vulnerability assessments
+
+**⚡ REAL Security (What Actually Matters):**
+
+1. **Process Isolation**: Run as non-privileged user with minimal permissions
+2. **OS-Level Controls**: Use chroot/containers/systemd to limit filesystem access
+3. **Network Isolation**: Firewall rules, network namespaces, air-gapped environments
+4. **Resource Limits**: ulimit, cgroups, memory/CPU quotas at the OS level
+5. **File Permissions**: Proper Unix permissions (chmod/chown) on directories and files
+6. **Monitoring**: System-level audit logs, not application logs
+7. **Regular Updates**: Keep OS, libraries, and dependencies patched
+
+**Remember**: If an attacker has code execution, application-level restrictions are meaningless. Defense-in-depth starts with the operating system.
 
 ## Development Notes
 

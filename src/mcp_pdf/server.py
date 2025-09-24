@@ -74,19 +74,41 @@ def validate_output_path(path: str) -> Path:
     """Validate and secure output paths to prevent directory traversal"""
     if not path:
         raise ValueError("Output path cannot be empty")
-    
+
     # Convert to Path and resolve to absolute path
     resolved_path = Path(path).resolve()
-    
+
     # Check for path traversal attempts
     if '../' in str(path) or '\\..\\' in str(path):
         raise ValueError("Path traversal detected in output path")
-    
-    # Ensure path is within safe directories
-    safe_prefixes = ['/tmp', '/var/tmp', str(CACHE_DIR.resolve())]
-    if not any(str(resolved_path).startswith(prefix) for prefix in safe_prefixes):
-        raise ValueError(f"Output path not allowed: {path}")
-    
+
+    # Check allowed output paths from environment variable
+    allowed_paths = os.getenv('MCP_PDF_ALLOWED_PATHS')
+
+    if allowed_paths is None:
+        # No restriction set - warn user but allow any path
+        logger.warning(f"MCP_PDF_ALLOWED_PATHS not set - allowing write to any directory: {resolved_path}")
+        logger.warning("SECURITY NOTE: This restriction is 'security theater' - real protection comes from OS-level permissions")
+        logger.warning("Recommended: Set MCP_PDF_ALLOWED_PATHS='/tmp:/var/tmp:/home/user/documents' AND use proper file permissions")
+        logger.warning("For true security: Run this server with limited user permissions, not as root/admin")
+        return resolved_path
+
+    # Parse allowed paths (semicolon or colon separated for cross-platform compatibility)
+    separator = ';' if os.name == 'nt' else ':'
+    allowed_prefixes = [Path(p.strip()).resolve() for p in allowed_paths.split(separator) if p.strip()]
+
+    # Check if resolved path is within any allowed directory
+    for allowed_prefix in allowed_prefixes:
+        try:
+            resolved_path.relative_to(allowed_prefix)
+            return resolved_path  # Path is within allowed directory
+        except ValueError:
+            continue  # Path is not within this allowed directory
+
+    # Path not allowed
+    allowed_paths_str = separator.join(str(p) for p in allowed_prefixes)
+    raise ValueError(f"Output path not allowed: {resolved_path}. Allowed paths: {allowed_paths_str}")
+
     return resolved_path
 
 def safe_json_parse(json_str: str, max_size: int = MAX_JSON_SIZE) -> dict:
