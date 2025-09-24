@@ -93,9 +93,10 @@ uv publish
 4. **Document Analysis**: `is_scanned_pdf`, `get_document_structure`, `extract_metadata`
 5. **Format Conversion**: `pdf_to_markdown` - Clean markdown with MCP resource URIs for images
 6. **Image Processing**: `extract_images` - Extract images with custom output paths and clean summary output
-7. **PDF Forms**: `extract_form_data`, `create_form_pdf`, `fill_form_pdf`, `add_form_fields` - Complete form lifecycle management
-8. **Document Assembly**: `merge_pdfs`, `split_pdf_by_pages`, `reorder_pdf_pages` - PDF manipulation and organization
-9. **Annotations & Markup**: `add_sticky_notes`, `add_highlights`, `add_stamps`, `add_video_notes`, `extract_all_annotations` - Collaboration and multimedia review tools
+7. **Link Extraction**: `extract_links` - Extract all hyperlinks with page filtering and type categorization
+8. **PDF Forms**: `extract_form_data`, `create_form_pdf`, `fill_form_pdf`, `add_form_fields` - Complete form lifecycle management
+9. **Document Assembly**: `merge_pdfs`, `split_pdf_by_pages`, `reorder_pdf_pages` - PDF manipulation and organization
+10. **Annotations & Markup**: `add_sticky_notes`, `add_highlights`, `add_stamps`, `add_video_notes`, `extract_all_annotations` - Collaboration and multimedia review tools
 
 ### MCP Client-Friendly Design
 
@@ -314,7 +315,7 @@ Based on comprehensive PDF usage patterns, here are potential high-impact featur
 - `detect_pdf_quality_issues` - Scan for structural problems
 
 ### 📄 Priority 5: Advanced Content Extraction
-- `extract_pdf_links` - All URLs and internal links
+- ✅ `extract_links` - All URLs and internal links (IMPLEMENTED)
 - `extract_pdf_fonts` - Font usage analysis
 - `extract_pdf_colors` - Color palette extraction
 - `extract_pdf_layers` - CAD/design layer information

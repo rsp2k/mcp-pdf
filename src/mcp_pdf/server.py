@@ -6295,12 +6295,181 @@ def create_server():
     """Create and return the MCP server instance"""
     return mcp
 
+@mcp.tool(
+    name="extract_links",
+    description="Extract all links from PDF with comprehensive filtering and analysis options"
+)
+async def extract_links(
+    pdf_path: str,
+    pages: Optional[str] = None,
+    include_internal: bool = True,
+    include_external: bool = True,
+    include_email: bool = True
+) -> dict:
+    """
+    Extract all links from a PDF document with page filtering options.
+
+    Args:
+        pdf_path: Path to PDF file or HTTPS URL
+        pages: Page numbers (e.g., "1,3,5" or "1-5,8,10-12"). If None, processes all pages
+        include_internal: Include internal document links (default: True)
+        include_external: Include external URL links (default: True)
+        include_email: Include email links (default: True)
+
+    Returns:
+        Dictionary containing extracted links organized by type and page
+    """
+    start_time = time.time()
+
+    try:
+        # Validate PDF path and security
+        path = await validate_pdf_path(pdf_path)
+
+        # Parse pages parameter
+        pages_to_extract = []
+        doc = fitz.open(path)
+        total_pages = doc.page_count
+
+        if pages:
+            try:
+                pages_to_extract = parse_page_ranges(pages, total_pages)
+            except ValueError as e:
+                raise ValueError(f"Invalid page specification: {e}")
+        else:
+            pages_to_extract = list(range(total_pages))
+
+        # Extract links from specified pages
+        all_links = []
+        pages_with_links = []
+
+        for page_num in pages_to_extract:
+            page = doc[page_num]
+            page_links = page.get_links()
+
+            if page_links:
+                pages_with_links.append(page_num + 1)  # 1-based for user
+
+                for link in page_links:
+                    link_info = {
+                        "page": page_num + 1,  # 1-based page numbering
+                        "type": "unknown",
+                        "destination": None,
+                        "coordinates": {
+                            "x0": round(link["from"].x0, 2),
+                            "y0": round(link["from"].y0, 2),
+                            "x1": round(link["from"].x1, 2),
+                            "y1": round(link["from"].y1, 2)
+                        }
+                    }
+
+                    # Determine link type and destination
+                    if link["kind"] == fitz.LINK_URI:
+                        # External URL
+                        if include_external:
+                            link_info["type"] = "external_url"
+                            link_info["destination"] = link["uri"]
+                            all_links.append(link_info)
+                    elif link["kind"] == fitz.LINK_GOTO:
+                        # Internal link to another page
+                        if include_internal:
+                            link_info["type"] = "internal_page"
+                            link_info["destination"] = f"Page {link['page'] + 1}"
+                            all_links.append(link_info)
+                    elif link["kind"] == fitz.LINK_GOTOR:
+                        # Link to external document
+                        if include_external:
+                            link_info["type"] = "external_document"
+                            link_info["destination"] = link.get("file", "unknown")
+                            all_links.append(link_info)
+                    elif link["kind"] == fitz.LINK_LAUNCH:
+                        # Launch application/file
+                        if include_external:
+                            link_info["type"] = "launch"
+                            link_info["destination"] = link.get("file", "unknown")
+                            all_links.append(link_info)
+                    elif link["kind"] == fitz.LINK_NAMED:
+                        # Named action (like print, quit, etc.)
+                        if include_internal:
+                            link_info["type"] = "named_action"
+                            link_info["destination"] = link.get("name", "unknown")
+                            all_links.append(link_info)
+
+        # Organize links by type
+        links_by_type = {
+            "external_url": [link for link in all_links if link["type"] == "external_url"],
+            "internal_page": [link for link in all_links if link["type"] == "internal_page"],
+            "external_document": [link for link in all_links if link["type"] == "external_document"],
+            "launch": [link for link in all_links if link["type"] == "launch"],
+            "named_action": [link for link in all_links if link["type"] == "named_action"],
+            "email": []  # PyMuPDF doesn't distinguish email separately, they come as external_url
+        }
+
+        # Extract email links from external URLs
+        if include_email:
+            for link in links_by_type["external_url"]:
+                if link["destination"] and link["destination"].startswith("mailto:"):
+                    email_link = link.copy()
+                    email_link["type"] = "email"
+                    email_link["destination"] = link["destination"].replace("mailto:", "")
+                    links_by_type["email"].append(email_link)
+
+            # Remove email links from external_url list
+            links_by_type["external_url"] = [
+                link for link in links_by_type["external_url"]
+                if not (link["destination"] and link["destination"].startswith("mailto:"))
+            ]
+
+        doc.close()
+
+        extraction_time = round(time.time() - start_time, 2)
+
+        return {
+            "file_info": {
+                "path": str(path),
+                "total_pages": total_pages,
+                "pages_searched": pages_to_extract if pages else list(range(total_pages))
+            },
+            "extraction_summary": {
+                "total_links_found": len(all_links),
+                "pages_with_links": pages_with_links,
+                "pages_searched_count": len(pages_to_extract),
+                "link_types_found": [link_type for link_type, links in links_by_type.items() if links]
+            },
+            "links_by_type": links_by_type,
+            "all_links": all_links,
+            "extraction_settings": {
+                "include_internal": include_internal,
+                "include_external": include_external,
+                "include_email": include_email,
+                "pages_filter": pages or "all"
+            },
+            "extraction_time": extraction_time
+        }
+
+    except Exception as e:
+        error_msg = sanitize_error_message(str(e))
+        logger.error(f"Link extraction failed for {pdf_path}: {error_msg}")
+        return {
+            "error": f"Link extraction failed: {error_msg}",
+            "extraction_time": round(time.time() - start_time, 2)
+        }
+
+
 def main():
     """Run the MCP server - entry point for CLI"""
     asyncio.run(run_server())
 
 async def run_server():
     """Run the MCP server"""
+    try:
+        from importlib.metadata import version
+        package_version = version("mcp-pdf")
+    except:
+        package_version = "1.0.1"
+
+    # Log version to stderr so it appears even with MCP protocol on stdout
+    import sys
+    print(f"🎬 MCP PDF Tools v{package_version}", file=sys.stderr)
     await mcp.run_stdio_async()
 
 if __name__ == "__main__":

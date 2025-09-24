@@ -25,19 +25,34 @@ uv sync --dev
 uv run python -c "from mcp_pdf.server import create_server; print('✅ MCP PDF loads successfully')"
 ```
 
-### 2. Test with Claude Code (Local Development)
+### 2. Add MCP Server to Claude Desktop
 
-Use the `-t local` flag to point Claude Code to your local development copy:
+#### For Production Use (PyPI Installation)
+
+Install the published version from PyPI:
 
 ```bash
-# Start Claude Code with local MCP PDF server
-claude-code -t local /path/to/mcp-pdf
+# For personal use across all projects
+claude mcp add -s local pdf-tools uvx mcp-pdf
+
+# For project-specific use (isolated to current directory)
+claude mcp add -s project pdf-tools uvx mcp-pdf
 ```
 
-Or if you're already in the mcp-pdf directory:
+#### For Local Development (Source Installation)
+
+When developing MCP PDF itself, use the local source:
 
 ```bash
-claude-code -t local .
+# For development from local source
+claude mcp add -s project pdf-tools-dev uv -- --directory /path/to/mcp-pdf-tools run mcp-pdf
+```
+
+Or if you're in the mcp-pdf directory:
+
+```bash
+# Development server from current directory
+claude mcp add -s project pdf-tools-dev uv -- --directory . run mcp-pdf
 ```
 
 ### 3. Alternative: Manual Server Testing

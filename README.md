@@ -6,7 +6,7 @@
 
 **🚀 The Ultimate PDF Processing Intelligence Platform for AI**
 
-*Transform any PDF into structured, actionable intelligence with 23 specialized tools*
+*Transform any PDF into structured, actionable intelligence with 24 specialized tools*
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square)](https://www.python.org/downloads/)
 [![FastMCP](https://img.shields.io/badge/FastMCP-2.0+-green.svg?style=flat-square)](https://github.com/jlowin/fastmcp)
@@ -31,7 +31,7 @@
 <td>
 
 ### 🏆 **Why MCP PDF Leads**
-- **🚀 23 Specialized Tools** for every PDF scenario
+- **🚀 24 Specialized Tools** for every PDF scenario
 - **🧠 AI-Powered Intelligence** beyond basic extraction
 - **🔄 Multi-Library Fallbacks** for 99.9% reliability
 - **⚡ 10x Faster** than traditional solutions
@@ -76,14 +76,31 @@ uv run mcp-pdf
 <details>
 <summary>🔧 <b>Claude Desktop Integration</b> (click to expand)</summary>
 
+### **📦 Production Installation (PyPI)**
+
+```bash
+# For personal use across all projects
+claude mcp add -s local pdf-tools uvx mcp-pdf
+
+# For project-specific use (isolated)
+claude mcp add -s project pdf-tools uvx mcp-pdf
+```
+
+### **🛠️ Development Installation (Source)**
+
+```bash
+# For local development from source
+claude mcp add -s project pdf-tools-dev uv -- --directory /path/to/mcp-pdf run mcp-pdf
+```
+
+### **⚙️ Manual Configuration**
 Add to your `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
     "pdf-tools": {
-      "command": "uv",
-      "args": ["run", "mcp-pdf"],
-      "cwd": "/path/to/mcp-pdf"
+      "command": "uvx",
+      "args": ["mcp-pdf"]
     }
   }
 }
