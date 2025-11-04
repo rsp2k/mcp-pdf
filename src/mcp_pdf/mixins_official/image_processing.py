@@ -75,7 +75,7 @@ class ImageProcessingMixin(MCPMixin):
 
             # Setup output directory
             if output_directory:
-                output_dir = await validate_output_path(output_directory)
+                output_dir = validate_output_path(output_directory)
                 output_dir.mkdir(parents=True, exist_ok=True)
             else:
                 output_dir = Path(tempfile.mkdtemp(prefix="pdf_images_"))

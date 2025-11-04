@@ -57,7 +57,7 @@ class AdvancedFormsMixin(MCPMixin):
         try:
             # Validate paths
             input_pdf_path = await validate_pdf_path(input_path)
-            output_pdf_path = await validate_output_path(output_path)
+            output_pdf_path = validate_output_path(output_path)
 
             # Parse fields data
             try:
@@ -174,7 +174,7 @@ class AdvancedFormsMixin(MCPMixin):
         try:
             # Validate paths
             input_pdf_path = await validate_pdf_path(input_path)
-            output_pdf_path = await validate_output_path(output_path)
+            output_pdf_path = validate_output_path(output_path)
 
             # Parse options
             try:
@@ -294,7 +294,7 @@ class AdvancedFormsMixin(MCPMixin):
         try:
             # Validate paths
             input_pdf_path = await validate_pdf_path(input_path)
-            output_pdf_path = await validate_output_path(output_path)
+            output_pdf_path = validate_output_path(output_path)
 
             # Open PDF
             doc = fitz.open(str(input_pdf_path))
@@ -403,7 +403,7 @@ class AdvancedFormsMixin(MCPMixin):
         try:
             # Validate paths
             input_pdf_path = await validate_pdf_path(input_path)
-            output_pdf_path = await validate_output_path(output_path)
+            output_pdf_path = validate_output_path(output_path)
 
             # Open PDF
             doc = fitz.open(str(input_pdf_path))

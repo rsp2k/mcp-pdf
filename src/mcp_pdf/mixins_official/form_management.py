@@ -163,7 +163,7 @@ class FormManagementMixin(MCPMixin):
         try:
             # Validate paths
             input_pdf_path = await validate_pdf_path(input_path)
-            output_pdf_path = await validate_output_path(output_path)
+            output_pdf_path = validate_output_path(output_path)
 
             # Parse form data
             try:
@@ -286,7 +286,7 @@ class FormManagementMixin(MCPMixin):
                 }
 
             # Validate output path
-            output_pdf_path = await validate_output_path(output_path)
+            output_pdf_path = validate_output_path(output_path)
 
             # Parse fields data
             try:

@@ -1,6 +1,6 @@
 [project]
 name = "mcp-pdf"
-version = "2.0.5"
+version = "2.0.6"
 description = "Secure FastMCP server for comprehensive PDF processing - text extraction, OCR, table extraction, forms, annotations, and more"
 authors = [{name = "Ryan Malloy", email = "ryan@malloys.us"}]
 readme = "README.md"

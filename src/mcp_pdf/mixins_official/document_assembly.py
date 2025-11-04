@@ -71,7 +71,7 @@ class DocumentAssemblyMixin(MCPMixin):
                 }
 
             # Validate output path
-            output_pdf_path = await validate_output_path(output_path)
+            output_pdf_path = validate_output_path(output_path)
 
             # Validate and open all input PDFs
             input_docs = []
@@ -324,7 +324,7 @@ class DocumentAssemblyMixin(MCPMixin):
         try:
             # Validate paths
             input_pdf_path = await validate_pdf_path(pdf_path)
-            output_pdf_path = await validate_output_path(output_path)
+            output_pdf_path = validate_output_path(output_path)
 
             # Parse page order
             try:

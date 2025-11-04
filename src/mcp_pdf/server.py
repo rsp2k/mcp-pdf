@@ -105,7 +105,7 @@ class PDFServerOfficial:
             """Get detailed server information including mixins and configuration"""
             return {
                 "server_name": "MCP PDF Tools (Official FastMCP Pattern)",
-                "version": "2.0.5",
+                "version": "2.0.6",
                 "architecture": "Official FastMCP Mixin Pattern",
                 "total_mixins": len(self.mixins),
                 "mixins": [
@@ -160,7 +160,7 @@ def main():
             from importlib.metadata import version
             package_version = version("mcp-pdf")
         except:
-            package_version = "2.0.5"
+            package_version = "2.0.6"
 
         logger.info(f"🎬 MCP PDF Tools Server v{package_version} (Official Pattern)")
 

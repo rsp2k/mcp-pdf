@@ -367,7 +367,7 @@ class MiscToolsMixin(MCPMixin):
         try:
             # Validate paths
             input_pdf_path = await validate_pdf_path(input_path)
-            output_pdf_path = await validate_output_path(output_path)
+            output_pdf_path = validate_output_path(output_path)
 
             # Parse validation rules
             try:
@@ -490,7 +490,7 @@ class MiscToolsMixin(MCPMixin):
                 }
 
             # Validate output path
-            output_pdf_path = await validate_output_path(output_path)
+            output_pdf_path = validate_output_path(output_path)
 
             # Open and analyze input PDFs
             input_docs = []
@@ -634,7 +634,7 @@ class MiscToolsMixin(MCPMixin):
         try:
             # Validate paths
             input_pdf_path = await validate_pdf_path(input_path)
-            output_dir = await validate_output_path(output_directory)
+            output_dir = validate_output_path(output_directory)
             output_dir.mkdir(parents=True, exist_ok=True)
 
             # Parse page ranges
@@ -758,7 +758,7 @@ class MiscToolsMixin(MCPMixin):
         try:
             # Validate paths
             input_pdf_path = await validate_pdf_path(input_path)
-            output_dir = await validate_output_path(output_directory)
+            output_dir = validate_output_path(output_directory)
             output_dir.mkdir(parents=True, exist_ok=True)
 
             doc = fitz.open(str(input_pdf_path))
