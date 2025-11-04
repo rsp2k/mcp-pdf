@@ -11,7 +11,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square)](https://www.python.org/downloads/)
 [![FastMCP](https://img.shields.io/badge/FastMCP-2.0+-green.svg?style=flat-square)](https://github.com/jlowin/fastmcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-[![Production Ready](https://img.shields.io/badge/status-production%20ready-brightgreen?style=flat-square)](https://github.com/rpm/mcp-pdf)
+[![Production Ready](https://img.shields.io/badge/status-production%20ready-brightgreen?style=flat-square)](https://github.com/rsp2k/mcp-pdf)
 [![MCP Protocol](https://img.shields.io/badge/MCP-1.13.0-purple?style=flat-square)](https://modelcontextprotocol.io)
 
 **🤝 Perfect Companion to [MCP Office Tools](https://git.supported.systems/MCP/mcp-office-tools)**
@@ -59,7 +59,7 @@
 
 ```bash
 # 1️⃣ Clone and install
-git clone https://github.com/rpm/mcp-pdf
+git clone https://github.com/rsp2k/mcp-pdf
 cd mcp-pdf
 uv sync
 
@@ -481,7 +481,7 @@ comparison = await compare_cross_format_documents([
 
 ```bash
 # Clone repository
-git clone https://github.com/rpm/mcp-pdf
+git clone https://github.com/rsp2k/mcp-pdf
 cd mcp-pdf
 
 # Install with uv (fastest)
@@ -540,7 +540,7 @@ CMD ["mcp-pdf"]
 
 ```bash
 # Clone and setup
-git clone https://github.com/rpm/mcp-pdf
+git clone https://github.com/rsp2k/mcp-pdf
 cd mcp-pdf
 uv sync --dev
 
@@ -637,8 +637,8 @@ uv run python examples/verify_installation.py
 
 ### **🌟 Join the PDF Intelligence Revolution!**
 
-[![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/rpm/mcp-pdf)
-[![Issues](https://img.shields.io/badge/Issues-Welcome-green?style=for-the-badge&logo=github)](https://github.com/rpm/mcp-pdf/issues)
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/rsp2k/mcp-pdf)
+[![Issues](https://img.shields.io/badge/Issues-Welcome-green?style=for-the-badge&logo=github)](https://github.com/rsp2k/mcp-pdf/issues)
 [![MCP Office Tools](https://img.shields.io/badge/Companion-MCP%20Office%20Tools-blue?style=for-the-badge)](https://git.supported.systems/MCP/mcp-office-tools)
 
 **💬 Enterprise Support Available** • **🐛 Bug Bounty Program** • **💡 Feature Requests Welcome**
@@ -666,7 +666,7 @@ uv run python examples/verify_installation.py
 
 ### **🔗 Complete Document Processing Solution**
 
-**PDF Intelligence** ➜ **[MCP PDF](https://github.com/rpm/mcp-pdf)** (You are here!)  
+**PDF Intelligence** ➜ **[MCP PDF](https://github.com/rsp2k/mcp-pdf)** (You are here!)  
 **Office Intelligence** ➜ **[MCP Office Tools](https://git.supported.systems/MCP/mcp-office-tools)**  
 **Unified Power** ➜ **Both Tools Together**
 
@@ -674,7 +674,7 @@ uv run python examples/verify_installation.py
 
 ### **⭐ Star both repositories for the complete solution! ⭐**
 
-**📄 [Star MCP PDF](https://github.com/rpm/mcp-pdf)** • **📊 [Star MCP Office Tools](https://git.supported.systems/MCP/mcp-office-tools)**
+**📄 [Star MCP PDF](https://github.com/rsp2k/mcp-pdf)** • **📊 [Star MCP Office Tools](https://git.supported.systems/MCP/mcp-office-tools)**
 
 *Building the future of intelligent document processing* 🚀
 

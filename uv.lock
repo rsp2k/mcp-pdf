@@ -1032,14 +1032,13 @@ wheels = [
 
 [[package]]
 name = "mcp-pdf"
-version = "1.1.0"
+version = "2.0.5"
 source = { editable = "." }
 dependencies = [
     { name = "camelot-py", extra = ["cv"] },
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "markdown" },
-    { name = "opencv-python" },
     { name = "pandas" },
     { name = "pdf2image" },
     { name = "pdfplumber" },
@@ -1053,6 +1052,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "reportlab" },
+]
 dev = [
     { name = "black" },
     { name = "build" },
@@ -1063,6 +1065,9 @@ dev = [
     { name = "ruff" },
     { name = "safety" },
     { name = "twine" },
+]
+forms = [
+    { name = "reportlab" },
 ]
 
 [package.dev-dependencies]
@@ -1085,7 +1090,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "markdown", specifier = ">=3.5.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "opencv-python", specifier = ">=4.5.0" },
     { name = "pandas", specifier = ">=2.0.0" },
     { name = "pdf2image", specifier = ">=1.16.0" },
     { name = "pdfplumber", specifier = ">=0.10.0" },
@@ -1098,12 +1102,14 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "reportlab", marker = "extra == 'all'", specifier = ">=4.0.0" },
+    { name = "reportlab", marker = "extra == 'forms'", specifier = ">=4.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "safety", marker = "extra == 'dev'", specifier = ">=3.0.0" },
     { name = "tabula-py", specifier = ">=2.8.0" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=4.0.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["forms", "all", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
