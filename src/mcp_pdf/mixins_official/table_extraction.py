@@ -44,7 +44,9 @@ class TableExtractionMixin(MCPMixin):
         pdf_path: str,
         pages: Optional[str] = None,
         method: str = "auto",
-        table_format: str = "json"
+        table_format: str = "json",
+        max_rows_per_table: Optional[int] = None,
+        summary_only: bool = False
     ) -> Dict[str, Any]:
         """
         Extract tables from PDF using intelligent method selection.
@@ -54,6 +56,8 @@ class TableExtractionMixin(MCPMixin):
             pages: Page numbers to extract (comma-separated, 1-based), None for all
             method: Extraction method ("auto", "camelot", "pdfplumber", "tabula")
             table_format: Output format ("json", "csv", "html")
+            max_rows_per_table: Maximum rows to return per table (prevents token overflow)
+            summary_only: Return only table metadata without data (useful for large tables)
 
         Returns:
             Dictionary containing extracted tables and metadata
@@ -80,11 +84,11 @@ class TableExtractionMixin(MCPMixin):
                     logger.info(f"Attempting table extraction with {extraction_method}")
 
                     if extraction_method == "camelot":
-                        result = await self._extract_with_camelot(path, parsed_pages, table_format)
+                        result = await self._extract_with_camelot(path, parsed_pages, table_format, max_rows_per_table, summary_only)
                     elif extraction_method == "pdfplumber":
-                        result = await self._extract_with_pdfplumber(path, parsed_pages, table_format)
+                        result = await self._extract_with_pdfplumber(path, parsed_pages, table_format, max_rows_per_table, summary_only)
                     elif extraction_method == "tabula":
-                        result = await self._extract_with_tabula(path, parsed_pages, table_format)
+                        result = await self._extract_with_tabula(path, parsed_pages, table_format, max_rows_per_table, summary_only)
                     else:
                         continue
 
@@ -129,6 +133,28 @@ class TableExtractionMixin(MCPMixin):
             }
 
     # Helper methods (synchronous)
+    def _process_table_data(self, df, table_format: str, max_rows: Optional[int], summary_only: bool) -> Any:
+        """Process table data with row limiting and summary options"""
+        if summary_only:
+            # Return None for data when in summary mode
+            return None
+
+        # Apply row limit if specified
+        if max_rows and len(df) > max_rows:
+            df_limited = df.head(max_rows)
+        else:
+            df_limited = df
+
+        # Convert to requested format
+        if table_format == "json":
+            return df_limited.to_dict('records')
+        elif table_format == "csv":
+            return df_limited.to_csv(index=False)
+        elif table_format == "html":
+            return df_limited.to_html(index=False)
+        else:
+            return df_limited.to_dict('records')
+
     def _parse_pages_parameter(self, pages: Optional[str]) -> Optional[str]:
         """Parse pages parameter for different extraction methods
 
@@ -151,7 +177,8 @@ class TableExtractionMixin(MCPMixin):
         except (ValueError, ImportError):
             return None
 
-    async def _extract_with_camelot(self, path: Path, pages: Optional[str], table_format: str) -> Dict[str, Any]:
+    async def _extract_with_camelot(self, path: Path, pages: Optional[str], table_format: str,
+                                     max_rows: Optional[int], summary_only: bool) -> Dict[str, Any]:
         """Extract tables using Camelot (best for complex tables)"""
         import camelot
 
@@ -165,27 +192,32 @@ class TableExtractionMixin(MCPMixin):
 
         extracted_tables = []
         for i, table in enumerate(tables):
-            if table_format == "json":
-                table_data = table.df.to_dict('records')
-            elif table_format == "csv":
-                table_data = table.df.to_csv(index=False)
-            elif table_format == "html":
-                table_data = table.df.to_html(index=False)
-            else:
-                table_data = table.df.to_dict('records')
+            # Process table data with limits
+            table_data = self._process_table_data(table.df, table_format, max_rows, summary_only)
 
-            extracted_tables.append({
+            table_info = {
                 "table_index": i + 1,
                 "page": table.page,
                 "accuracy": round(table.accuracy, 2) if hasattr(table, 'accuracy') else None,
-                "rows": len(table.df),
+                "total_rows": len(table.df),
                 "columns": len(table.df.columns),
-                "data": table_data
-            })
+            }
+
+            # Only include data if not summary_only
+            if not summary_only:
+                table_info["data"] = table_data
+                if max_rows and len(table.df) > max_rows:
+                    table_info["rows_returned"] = max_rows
+                    table_info["rows_truncated"] = len(table.df) - max_rows
+                else:
+                    table_info["rows_returned"] = len(table.df)
+
+            extracted_tables.append(table_info)
 
         return {"tables": extracted_tables}
 
-    async def _extract_with_pdfplumber(self, path: Path, pages: Optional[str], table_format: str) -> Dict[str, Any]:
+    async def _extract_with_pdfplumber(self, path: Path, pages: Optional[str], table_format: str,
+                                        max_rows: Optional[int], summary_only: bool) -> Dict[str, Any]:
         """Extract tables using pdfplumber (good for simple tables)"""
         import pdfplumber
 
@@ -204,28 +236,33 @@ class TableExtractionMixin(MCPMixin):
                                 # Convert to DataFrame for consistent formatting
                                 df = pd.DataFrame(table[1:], columns=table[0])
 
-                                if table_format == "json":
-                                    table_data = df.to_dict('records')
-                                elif table_format == "csv":
-                                    table_data = df.to_csv(index=False)
-                                elif table_format == "html":
-                                    table_data = df.to_html(index=False)
-                                else:
-                                    table_data = df.to_dict('records')
+                                # Process table data with limits
+                                table_data = self._process_table_data(df, table_format, max_rows, summary_only)
 
-                                extracted_tables.append({
+                                table_info = {
                                     "table_index": len(extracted_tables) + 1,
                                     "page": page_num + 1,
-                                    "rows": len(df),
+                                    "total_rows": len(df),
                                     "columns": len(df.columns),
-                                    "data": table_data
-                                })
+                                }
+
+                                # Only include data if not summary_only
+                                if not summary_only:
+                                    table_info["data"] = table_data
+                                    if max_rows and len(df) > max_rows:
+                                        table_info["rows_returned"] = max_rows
+                                        table_info["rows_truncated"] = len(df) - max_rows
+                                    else:
+                                        table_info["rows_returned"] = len(df)
+
+                                extracted_tables.append(table_info)
 
             return {"tables": extracted_tables}
 
         return await asyncio.get_event_loop().run_in_executor(None, extract_pdfplumber)
 
-    async def _extract_with_tabula(self, path: Path, pages: Optional[str], table_format: str) -> Dict[str, Any]:
+    async def _extract_with_tabula(self, path: Path, pages: Optional[str], table_format: str,
+                                    max_rows: Optional[int], summary_only: bool) -> Dict[str, Any]:
         """Extract tables using Tabula (Java-based, good for complex layouts)"""
         import tabula
 
@@ -238,22 +275,26 @@ class TableExtractionMixin(MCPMixin):
             extracted_tables = []
             for i, df in enumerate(tables):
                 if not df.empty:
-                    if table_format == "json":
-                        table_data = df.to_dict('records')
-                    elif table_format == "csv":
-                        table_data = df.to_csv(index=False)
-                    elif table_format == "html":
-                        table_data = df.to_html(index=False)
-                    else:
-                        table_data = df.to_dict('records')
+                    # Process table data with limits
+                    table_data = self._process_table_data(df, table_format, max_rows, summary_only)
 
-                    extracted_tables.append({
+                    table_info = {
                         "table_index": i + 1,
                         "page": None,  # Tabula doesn't provide page info easily
-                        "rows": len(df),
+                        "total_rows": len(df),
                         "columns": len(df.columns),
-                        "data": table_data
-                    })
+                    }
+
+                    # Only include data if not summary_only
+                    if not summary_only:
+                        table_info["data"] = table_data
+                        if max_rows and len(df) > max_rows:
+                            table_info["rows_returned"] = max_rows
+                            table_info["rows_truncated"] = len(df) - max_rows
+                        else:
+                            table_info["rows_returned"] = len(df)
+
+                    extracted_tables.append(table_info)
 
             return {"tables": extracted_tables}
 
