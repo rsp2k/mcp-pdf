@@ -24,19 +24,19 @@
 
 > 🎯 **The Problem**: PDFs contain incredible intelligence, but extracting it reliably is complex, slow, and often fails.
 >
-> ⚡ **The Solution**: MCP PDF delivers **AI-powered document intelligence** with **23 specialized tools** that understand both content and structure.
+> ⚡ **The Solution**: MCP PDF delivers **AI-powered document intelligence** with **40 specialized tools** that understand both content and structure.
 
 <table>
 <tr>
 <td>
 
 ### 🏆 **Why MCP PDF Leads**
-- **🚀 24 Specialized Tools** for every PDF scenario
+- **🚀 40 Specialized Tools** for every PDF scenario
 - **🧠 AI-Powered Intelligence** beyond basic extraction
 - **🔄 Multi-Library Fallbacks** for 99.9% reliability
 - **⚡ 10x Faster** than traditional solutions
 - **🌐 URL Processing** with smart caching
-- **👥 User-Friendly** 1-based page numbering
+- **🎯 Smart Token Management** prevents MCP overflow errors
 
 </td>
 <td>
@@ -117,9 +117,14 @@ Add to your `claude_desktop_config.json`:
 ```python
 # Complete financial report analysis in seconds
 health = await analyze_pdf_health("quarterly-report.pdf")
-classification = await classify_content("quarterly-report.pdf") 
+classification = await classify_content("quarterly-report.pdf")
 summary = await summarize_content("quarterly-report.pdf", summary_length="medium")
-tables = await extract_tables("quarterly-report.pdf", pages=[5,6,7])
+
+# Smart table extraction - prevents token overflow on large tables
+tables = await extract_tables("quarterly-report.pdf", pages="5-7", max_rows_per_table=100)
+# Or get just table structure without data
+table_summary = await extract_tables("quarterly-report.pdf", pages="5-7", summary_only=True)
+
 charts = await extract_charts("quarterly-report.pdf")
 
 # Get instant insights
@@ -177,7 +182,7 @@ citations = await extract_text("research-paper.pdf", pages=[15,16,17])
 
 ---
 
-## 🛠️ **Complete Arsenal: 23 Specialized Tools**
+## 🛠️ **Complete Arsenal: 40+ Specialized Tools**
 
 <div align="center">
 
@@ -195,8 +200,8 @@ citations = await extract_text("research-paper.pdf", pages=[15,16,17])
 
 | 🔧 **Tool** | 📋 **Purpose** | ⚡ **Speed** | 🎯 **Accuracy** |
 |-------------|---------------|-------------|----------------|
-| `extract_text` | Multi-method text extraction | **Ultra Fast** | 99.9% |
-| `extract_tables` | Intelligent table processing | **Fast** | 98% |
+| `extract_text` | Multi-method text extraction with auto-chunking | **Ultra Fast** | 99.9% |
+| `extract_tables` | Smart table extraction with token overflow protection | **Fast** | 98% |
 | `ocr_pdf` | Advanced OCR for scanned docs | **Moderate** | 95% |
 | `extract_images` | Media extraction & processing | **Fast** | 99% |
 | `pdf_to_markdown` | Structure-preserving conversion | **Fast** | 97% |
