@@ -6,7 +6,7 @@
 
 **🚀 The Ultimate PDF Processing Intelligence Platform for AI**
 
-*Transform any PDF into structured, actionable intelligence with 24 specialized tools*
+*Transform any PDF into structured, actionable intelligence with 41 specialized tools*
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square)](https://www.python.org/downloads/)
 [![FastMCP](https://img.shields.io/badge/FastMCP-2.0+-green.svg?style=flat-square)](https://github.com/jlowin/fastmcp)
@@ -24,14 +24,14 @@
 
 > 🎯 **The Problem**: PDFs contain incredible intelligence, but extracting it reliably is complex, slow, and often fails.
 >
-> ⚡ **The Solution**: MCP PDF delivers **AI-powered document intelligence** with **40 specialized tools** that understand both content and structure.
+> ⚡ **The Solution**: MCP PDF delivers **AI-powered document intelligence** with **41 specialized tools** that understand both content and structure.
 
 <table>
 <tr>
 <td>
 
 ### 🏆 **Why MCP PDF Leads**
-- **🚀 40 Specialized Tools** for every PDF scenario
+- **🚀 41 Specialized Tools** for every PDF scenario
 - **🧠 AI-Powered Intelligence** beyond basic extraction
 - **🔄 Multi-Library Fallbacks** for 99.9% reliability
 - **⚡ 10x Faster** than traditional solutions
@@ -182,7 +182,7 @@ citations = await extract_text("research-paper.pdf", pages=[15,16,17])
 
 ---
 
-## 🛠️ **Complete Arsenal: 40+ Specialized Tools**
+## 🛠️ **Complete Arsenal: 41 Specialized Tools**
 
 <div align="center">
 
@@ -213,6 +213,7 @@ citations = await extract_text("research-paper.pdf", pages=[15,16,17])
 | `analyze_layout` | Page structure & column detection | **High** | Advanced |
 | `extract_charts` | Visual element extraction | **High** | Smart |
 | `detect_watermarks` | Watermark identification | **Perfect** | Complete |
+| `extract_vector_graphics` | PDF to SVG for schematics & drawings | **Perfect** | Multi-mode |
 
 </div>
 
@@ -614,6 +615,7 @@ uv run python examples/verify_installation.py
 - `analyze_layout` - Page layout analysis with column and spacing detection
 - `extract_charts` - Chart, diagram, and visual element extraction
 - `detect_watermarks` - Watermark detection and analysis
+- `extract_vector_graphics` - Extract vector graphics to SVG (schematics, charts, technical drawings)
 
 </details>
 

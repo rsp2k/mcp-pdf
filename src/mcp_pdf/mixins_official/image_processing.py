@@ -383,3 +383,357 @@ class ImageProcessingMixin(MCPMixin):
         # Very basic check - could be enhanced
         markdown_patterns = ['# ', '## ', '### ', '* ', '- ', '1. ', '**', '__']
         return any(pattern in line for pattern in markdown_patterns)
+
+    @mcp_tool(
+        name="extract_vector_graphics",
+        description="Extract vector graphics from PDF to SVG format. Ideal for schematics, charts, and technical drawings."
+    )
+    async def extract_vector_graphics(
+        self,
+        pdf_path: str,
+        output_directory: Optional[str] = None,
+        pages: Optional[str] = None,
+        mode: str = "full_page",
+        include_text: bool = True,
+        simplify_paths: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Extract vector graphics from PDF pages as SVG files.
+
+        Perfect for extracting:
+        - IC functional diagrams from datasheets
+        - Frequency response charts and line graphs
+        - Package outline drawings (dimensioned technical drawings)
+        - Circuit schematics
+        - PCB layout diagrams
+
+        Args:
+            pdf_path: Path to PDF file or HTTPS URL
+            output_directory: Directory to save SVG files (default: temp directory)
+            pages: Page numbers to extract (comma-separated, 1-based), None for all
+            mode: Extraction mode:
+                - "full_page": Complete page as SVG (default, best for general use)
+                - "drawings_only": Extract individual vector paths as separate SVG
+                - "both": Export both formats for flexibility
+            include_text: Whether to include text in SVG output (default: True)
+            simplify_paths: Reduce path complexity for smaller files (default: False)
+
+        Returns:
+            Dictionary containing extraction summary and SVG file paths
+        """
+        start_time = time.time()
+
+        try:
+            # Validate PDF path
+            input_pdf_path = await validate_pdf_path(pdf_path)
+
+            # Setup output directory
+            if output_directory:
+                output_dir = validate_output_path(output_directory)
+                output_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                output_dir = Path(tempfile.mkdtemp(prefix="pdf_vectors_"))
+
+            # Parse pages parameter
+            parsed_pages = parse_pages_parameter(pages)
+
+            # Validate mode
+            valid_modes = ["full_page", "drawings_only", "both"]
+            if mode not in valid_modes:
+                return {
+                    "success": False,
+                    "error": f"Invalid mode '{mode}'. Valid modes: {', '.join(valid_modes)}",
+                    "extraction_time": round(time.time() - start_time, 2)
+                }
+
+            # Open PDF document
+            doc = fitz.open(str(input_pdf_path))
+            total_pages = len(doc)
+
+            # Determine pages to process
+            pages_to_process = parsed_pages if parsed_pages else list(range(total_pages))
+            pages_to_process = [p for p in pages_to_process if 0 <= p < total_pages]
+
+            if not pages_to_process:
+                doc.close()
+                return {
+                    "success": False,
+                    "error": "No valid pages specified",
+                    "extraction_time": round(time.time() - start_time, 2)
+                }
+
+            svg_files = []
+            total_size = 0
+            base_name = input_pdf_path.stem
+
+            for page_num in pages_to_process:
+                try:
+                    page = doc[page_num]
+                    page_results = {}
+
+                    # Full page SVG extraction
+                    if mode in ["full_page", "both"]:
+                        svg_content = page.get_svg_image(
+                            text_as_path=not include_text
+                        )
+
+                        # Optionally simplify paths (basic implementation)
+                        if simplify_paths:
+                            svg_content = self._simplify_svg_paths(svg_content)
+
+                        filename = f"{base_name}_page_{page_num + 1}.svg"
+                        output_path = output_dir / filename
+
+                        with open(output_path, 'w', encoding='utf-8') as f:
+                            f.write(svg_content)
+
+                        file_size = output_path.stat().st_size
+                        total_size += file_size
+
+                        page_results["full_page"] = {
+                            "filename": filename,
+                            "path": str(output_path),
+                            "size_bytes": file_size,
+                            "size_kb": round(file_size / 1024, 1)
+                        }
+
+                    # Individual drawings extraction
+                    if mode in ["drawings_only", "both"]:
+                        drawings = page.get_drawings()
+                        drawing_count = len(drawings)
+
+                        if drawing_count > 0:
+                            # Convert drawings to SVG
+                            drawings_svg = self._drawings_to_svg(
+                                drawings,
+                                page.rect.width,
+                                page.rect.height
+                            )
+
+                            filename = f"{base_name}_page_{page_num + 1}_drawings.svg"
+                            output_path = output_dir / filename
+
+                            with open(output_path, 'w', encoding='utf-8') as f:
+                                f.write(drawings_svg)
+
+                            file_size = output_path.stat().st_size
+                            total_size += file_size
+
+                            page_results["drawings_only"] = {
+                                "filename": filename,
+                                "path": str(output_path),
+                                "size_bytes": file_size,
+                                "size_kb": round(file_size / 1024, 1),
+                                "drawing_count": drawing_count
+                            }
+                        else:
+                            page_results["drawings_only"] = {
+                                "skipped": True,
+                                "reason": "No vector drawings found on page"
+                            }
+
+                    # Get drawing statistics for the page
+                    all_drawings = page.get_drawings()
+
+                    svg_files.append({
+                        "page": page_num + 1,
+                        "has_text": bool(page.get_text().strip()),
+                        "drawing_count": len(all_drawings),
+                        **page_results
+                    })
+
+                except Exception as e:
+                    logger.warning(f"Failed to extract vectors from page {page_num + 1}: {e}")
+                    svg_files.append({
+                        "page": page_num + 1,
+                        "error": sanitize_error_message(str(e))
+                    })
+
+            doc.close()
+
+            # Count successful extractions
+            successful_pages = sum(1 for f in svg_files if "error" not in f)
+
+            return {
+                "success": True,
+                "extraction_summary": {
+                    "pages_processed": len(pages_to_process),
+                    "pages_successful": successful_pages,
+                    "mode": mode,
+                    "total_size_bytes": total_size,
+                    "total_size_kb": round(total_size / 1024, 1),
+                    "output_directory": str(output_dir)
+                },
+                "svg_files": svg_files,
+                "settings": {
+                    "include_text": include_text,
+                    "simplify_paths": simplify_paths,
+                    "mode": mode
+                },
+                "file_info": {
+                    "input_path": str(input_pdf_path),
+                    "total_pages": total_pages,
+                    "pages_processed": pages or "all"
+                },
+                "extraction_time": round(time.time() - start_time, 2),
+                "hints": {
+                    "viewing": "Open SVG files in browser, Inkscape, or Illustrator for editing",
+                    "full_page_vs_drawings": "full_page preserves layout; drawings_only extracts raw vector paths"
+                }
+            }
+
+        except Exception as e:
+            error_msg = sanitize_error_message(str(e))
+            logger.error(f"Vector graphics extraction failed: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "extraction_time": round(time.time() - start_time, 2)
+            }
+
+    def _drawings_to_svg(
+        self,
+        drawings: List[Dict],
+        width: float,
+        height: float
+    ) -> str:
+        """
+        Convert PyMuPDF drawings to standalone SVG.
+
+        Drawings contain: rect, items (path operations), color, fill, width, etc.
+        """
+        svg_parts = [
+            f'<?xml version="1.0" encoding="UTF-8"?>',
+            f'<svg xmlns="http://www.w3.org/2000/svg" ',
+            f'viewBox="0 0 {width:.2f} {height:.2f}" ',
+            f'width="{width:.2f}" height="{height:.2f}">',
+            '',
+            '  <!-- Extracted vector drawings from PDF -->',
+            ''
+        ]
+
+        for idx, drawing in enumerate(drawings):
+            try:
+                path_data = self._drawing_to_path(drawing)
+                if not path_data:
+                    continue
+
+                # Extract style attributes
+                stroke_color = self._color_to_svg(drawing.get('color'))
+                fill_color = self._color_to_svg(drawing.get('fill'))
+                stroke_width = drawing.get('width', 1)
+
+                # Build style string
+                style_parts = []
+                if fill_color:
+                    style_parts.append(f'fill:{fill_color}')
+                else:
+                    style_parts.append('fill:none')
+
+                if stroke_color:
+                    style_parts.append(f'stroke:{stroke_color}')
+                    style_parts.append(f'stroke-width:{stroke_width:.2f}')
+
+                style = ';'.join(style_parts)
+
+                svg_parts.append(f'  <path d="{path_data}" style="{style}" />')
+
+            except Exception as e:
+                logger.debug(f"Failed to convert drawing {idx}: {e}")
+                continue
+
+        svg_parts.append('</svg>')
+        return '\n'.join(svg_parts)
+
+    def _drawing_to_path(self, drawing: Dict) -> Optional[str]:
+        """Convert a single drawing to SVG path data string."""
+        items = drawing.get('items', [])
+        if not items:
+            return None
+
+        path_parts = []
+
+        for item in items:
+            if not item:
+                continue
+
+            # Item format: (type, points...)
+            item_type = item[0]
+
+            try:
+                if item_type == 'l':  # Line
+                    # ('l', Point, Point)
+                    p1, p2 = item[1], item[2]
+                    path_parts.append(f'M {p1.x:.2f} {p1.y:.2f}')
+                    path_parts.append(f'L {p2.x:.2f} {p2.y:.2f}')
+
+                elif item_type == 're':  # Rectangle
+                    # ('re', Rect)
+                    rect = item[1]
+                    path_parts.append(f'M {rect.x0:.2f} {rect.y0:.2f}')
+                    path_parts.append(f'L {rect.x1:.2f} {rect.y0:.2f}')
+                    path_parts.append(f'L {rect.x1:.2f} {rect.y1:.2f}')
+                    path_parts.append(f'L {rect.x0:.2f} {rect.y1:.2f}')
+                    path_parts.append('Z')
+
+                elif item_type == 'qu':  # Quad (4-point polygon)
+                    # ('qu', Quad)
+                    quad = item[1]
+                    path_parts.append(f'M {quad.ul.x:.2f} {quad.ul.y:.2f}')
+                    path_parts.append(f'L {quad.ur.x:.2f} {quad.ur.y:.2f}')
+                    path_parts.append(f'L {quad.lr.x:.2f} {quad.lr.y:.2f}')
+                    path_parts.append(f'L {quad.ll.x:.2f} {quad.ll.y:.2f}')
+                    path_parts.append('Z')
+
+                elif item_type == 'c':  # Cubic bezier curve
+                    # ('c', Point, Point, Point, Point) - start, ctrl1, ctrl2, end
+                    p0, p1, p2, p3 = item[1], item[2], item[3], item[4]
+                    if not path_parts or not path_parts[-1].startswith('M'):
+                        path_parts.append(f'M {p0.x:.2f} {p0.y:.2f}')
+                    path_parts.append(f'C {p1.x:.2f} {p1.y:.2f} {p2.x:.2f} {p2.y:.2f} {p3.x:.2f} {p3.y:.2f}')
+
+            except (IndexError, AttributeError) as e:
+                logger.debug(f"Failed to process drawing item {item_type}: {e}")
+                continue
+
+        return ' '.join(path_parts) if path_parts else None
+
+    def _color_to_svg(self, color) -> Optional[str]:
+        """Convert PyMuPDF color to SVG color string."""
+        if color is None:
+            return None
+
+        if isinstance(color, (list, tuple)):
+            if len(color) == 3:
+                r, g, b = [int(c * 255) for c in color]
+                return f'rgb({r},{g},{b})'
+            elif len(color) == 1:
+                # Grayscale
+                gray = int(color[0] * 255)
+                return f'rgb({gray},{gray},{gray})'
+            elif len(color) == 4:
+                # CMYK - convert to RGB (simplified)
+                c, m, y, k = color
+                r = int(255 * (1 - c) * (1 - k))
+                g = int(255 * (1 - m) * (1 - k))
+                b = int(255 * (1 - y) * (1 - k))
+                return f'rgb({r},{g},{b})'
+
+        return None
+
+    def _simplify_svg_paths(self, svg_content: str) -> str:
+        """
+        Basic SVG path simplification.
+        Reduces decimal precision to shrink file size.
+        """
+        import re
+
+        # Reduce decimal precision in path data
+        def reduce_precision(match):
+            num = float(match.group())
+            return f'{num:.1f}'
+
+        # Match floating point numbers in SVG
+        simplified = re.sub(r'-?\d+\.\d{3,}', reduce_precision, svg_content)
+
+        return simplified
