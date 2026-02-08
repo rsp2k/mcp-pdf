@@ -6,7 +6,10 @@ This mixin enables filling ANY PDF (scanned, flat, non-interactive) by drawing
 text and checkboxes at specified (x, y) coordinates, then merging the overlay
 with the original template. This is ideal for government forms that don't have
 proper AcroForm fields.
+
+Requires: pip install mcp-pdf[forms]
 """
+from __future__ import annotations
 
 import base64
 import io
@@ -15,15 +18,11 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, BinaryIO
+from typing import Any, Dict, List, Optional, BinaryIO, TYPE_CHECKING
 import logging
 
-# PDF processing libraries
+# PDF processing libraries (always available)
 from pypdf import PdfReader, PdfWriter
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.units import inch
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfgen import canvas
 from PIL import Image
 
 # Official FastMCP mixin
@@ -33,19 +32,55 @@ from ..security import validate_pdf_path, validate_output_path, sanitize_error_m
 
 logger = logging.getLogger(__name__)
 
+# Lazy import for reportlab (optional dependency)
+_reportlab_available = None
+
+def _check_reportlab():
+    """Check if reportlab is available, raise helpful error if not."""
+    global _reportlab_available
+    if _reportlab_available is None:
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.lib.units import inch
+            from reportlab.lib.utils import ImageReader
+            from reportlab.pdfgen import canvas
+            _reportlab_available = True
+        except ImportError:
+            _reportlab_available = False
+
+    if not _reportlab_available:
+        raise ImportError(
+            "reportlab is required for permit form tools. "
+            "Install with: pip install mcp-pdf[forms]"
+        )
+
+def _get_reportlab():
+    """Get reportlab modules, raising error if not available."""
+    _check_reportlab()
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import inch
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+    return {
+        'letter': letter,
+        'inch': inch,
+        'ImageReader': ImageReader,
+        'canvas': canvas,
+    }
+
 # Page dimensions: 612 x 792 points (letter size)
 # Y coordinates in PDF are from bottom, so we convert from top-origin
 PAGE_HEIGHT = 792
 PAGE_WIDTH = 612
 
-# Margins for attachment pages
-MARGIN_TOP = 0.75 * inch
-MARGIN_BOTTOM = 0.5 * inch
-MARGIN_LEFT = 0.5 * inch
-MARGIN_RIGHT = 0.5 * inch
+# Margins for attachment pages (in points, 72 points = 1 inch)
+MARGIN_TOP = 54      # 0.75 inch
+MARGIN_BOTTOM = 36   # 0.5 inch
+MARGIN_LEFT = 36     # 0.5 inch
+MARGIN_RIGHT = 36    # 0.5 inch
 
 # Header styling for attachment pages
-HEADER_HEIGHT = 0.5 * inch
+HEADER_HEIGHT = 36   # 0.5 inch
 HEADER_FONT_SIZE = 14
 
 
@@ -295,8 +330,9 @@ def _create_attachment_page_with_image(
     Returns:
         BytesIO buffer containing the single-page PDF
     """
+    rl = _get_reportlab()
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
+    c = rl['canvas'].Canvas(buffer, pagesize=rl['letter'])
 
     # Calculate content area
     content_top = PAGE_HEIGHT - MARGIN_TOP
@@ -361,7 +397,7 @@ def _create_attachment_page_with_image(
 
         # Draw the image
         img_buffer.seek(0)
-        img_reader = ImageReader(img_buffer)
+        img_reader = rl['ImageReader'](img_buffer)
         c.drawImage(
             img_reader,
             draw_x, draw_y,
@@ -395,8 +431,9 @@ def _create_attachment_page_with_text(
     Returns:
         BytesIO buffer containing the single-page PDF
     """
+    rl = _get_reportlab()
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
+    c = rl['canvas'].Canvas(buffer, pagesize=rl['letter'])
 
     content_top = PAGE_HEIGHT - MARGIN_TOP
     content_bottom = MARGIN_BOTTOM
@@ -473,8 +510,9 @@ def _create_see_page_annotation(
     Returns:
         BytesIO buffer containing a single-page PDF with the annotation
     """
+    rl = _get_reportlab()
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
+    c = rl['canvas'].Canvas(buffer, pagesize=rl['letter'])
 
     # Convert y from top-down to PDF bottom-up coordinates
     pdf_y = PAGE_HEIGHT - y - height
@@ -514,8 +552,9 @@ def _create_page_overlay(
     page_num: int,
 ) -> io.BytesIO:
     """Create overlay for a specific page with form data."""
+    rl = _get_reportlab()
     buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
+    c = rl['canvas'].Canvas(buffer, pagesize=rl['letter'])
     c.setFont("Helvetica", 9)
 
     # Get fields for this page
@@ -919,6 +958,9 @@ Returns:
         start_time = time.time()
 
         try:
+            # Get reportlab (optional dependency)
+            rl = _get_reportlab()
+
             # Validate template path
             template_file = await validate_pdf_path(template_path)
 
@@ -937,7 +979,7 @@ Returns:
 
                 # Create overlay with field boxes
                 buffer = io.BytesIO()
-                c = canvas.Canvas(buffer, pagesize=letter)
+                c = rl['canvas'].Canvas(buffer, pagesize=rl['letter'])
 
                 # Semi-transparent red for boxes
                 c.setStrokeColorRGB(1, 0, 0)  # Red stroke

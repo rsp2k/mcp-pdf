@@ -24,6 +24,7 @@ from .mixins_official.security_analysis import SecurityAnalysisMixin
 from .mixins_official.content_analysis import ContentAnalysisMixin
 from .mixins_official.pdf_utilities import PDFUtilitiesMixin
 from .mixins_official.misc_tools import MiscToolsMixin
+from .mixins_official.permit_forms import PermitFormMixin
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -79,6 +80,7 @@ class PDFServerOfficial:
             ContentAnalysisMixin,
             PDFUtilitiesMixin,
             MiscToolsMixin,
+            PermitFormMixin,
         ]
 
         for mixin_class in mixin_classes:
@@ -105,7 +107,7 @@ class PDFServerOfficial:
             """Get detailed server information including mixins and configuration"""
             return {
                 "server_name": "MCP PDF Tools (Official FastMCP Pattern)",
-                "version": "2.0.7",
+                "version": "2.0.10",
                 "architecture": "Official FastMCP Mixin Pattern",
                 "total_mixins": len(self.mixins),
                 "mixins": [
@@ -160,7 +162,7 @@ def main():
             from importlib.metadata import version
             package_version = version("mcp-pdf")
         except:
-            package_version = "2.0.7"
+            package_version = "2.0.10"
 
         logger.info(f"🎬 MCP PDF Tools Server v{package_version} (Official Pattern)")
 

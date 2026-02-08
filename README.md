@@ -6,7 +6,7 @@
 
 **A FastMCP server for PDF processing**
 
-*41 tools for text extraction, OCR, tables, forms, annotations, and more*
+*46 tools for text extraction, OCR, tables, forms, annotations, and more*
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square)](https://www.python.org/downloads/)
 [![FastMCP](https://img.shields.io/badge/FastMCP-2.0+-green.svg?style=flat-square)](https://github.com/jlowin/fastmcp)
@@ -97,6 +97,20 @@ uv run python examples/verify_installation.py
 | `fill_form_pdf` | Fill form fields from JSON |
 | `create_form_pdf` | Create new forms with text fields, checkboxes, dropdowns |
 | `add_form_fields` | Add fields to existing PDFs |
+
+### Permit Forms (Coordinate-Based)
+
+For scanned PDFs or forms without interactive fields. Draws text at (x, y) coordinates.
+
+| Tool | What it does |
+|------|-------------|
+| `fill_permit_form` | Fill any PDF by drawing at coordinates (works with scanned forms) |
+| `get_field_schema` | Get field definitions for validation or UI generation |
+| `validate_permit_form_data` | Check data against field schema before filling |
+| `preview_field_positions` | Generate PDF showing field boundaries (debugging) |
+| `insert_attachment_pages` | Insert image/text pages with "See page X" references |
+
+**Requires:** `pip install mcp-pdf[forms]` (adds reportlab dependency)
 
 ### Document Assembly
 
