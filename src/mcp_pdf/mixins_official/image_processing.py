@@ -3,19 +3,14 @@ Image Processing Mixin - PDF image extraction and markdown conversion
 Uses official fastmcp.contrib.mcp_mixin pattern
 """
 
-import asyncio
 import time
 import tempfile
-import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
 
 # PDF and image processing libraries
 import fitz  # PyMuPDF
-from PIL import Image
-import io
-import base64
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -219,23 +214,44 @@ class ImageProcessingMixin(MCPMixin):
 
     @mcp_tool(
         name="pdf_to_markdown",
-        description="Convert PDF to markdown with MCP resource URIs"
+        description=(
+            "Convert PDF to markdown. When output_directory is provided, images are "
+            "extracted to {output_directory}/images/ with relative ./images/ paths in "
+            "the markdown — ready for Starlight, browsers, or any renderer. "
+            "Without output_directory, images use pdf-image:// MCP resource URIs."
+        )
     )
     async def pdf_to_markdown(
         self,
         pdf_path: str,
         pages: Optional[str] = None,
         include_images: bool = True,
-        include_metadata: bool = True
+        include_metadata: bool = True,
+        output_directory: Optional[str] = None,
+        min_width: int = 100,
+        min_height: int = 100,
+        image_format: str = "png",
+        save_markdown: bool = False
     ) -> Dict[str, Any]:
         """
-        Convert PDF to clean markdown format with MCP resource URIs for images.
+        Convert PDF to clean markdown format.
+
+        Two image modes:
+        - With output_directory: extracts images to disk, uses relative paths in markdown.
+          Images are filtered by min_width/min_height (matching extract_images behavior).
+        - Without output_directory: uses pdf-image:// MCP resource URIs (legacy behavior).
 
         Args:
             pdf_path: Path to PDF file or HTTPS URL
             pages: Page numbers to convert (comma-separated, 1-based), None for all
             include_images: Whether to include images in markdown
             include_metadata: Whether to include document metadata
+            output_directory: Directory for extracted images and optional markdown file.
+                When set, images go to {output_directory}/images/ with relative paths.
+            min_width: Minimum image width to extract (only when output_directory is set)
+            min_height: Minimum image height to extract (only when output_directory is set)
+            image_format: Image format - "png" or "jpg" (only when output_directory is set)
+            save_markdown: Save markdown to {output_directory}/{filename}.md
 
         Returns:
             Dictionary containing markdown content and metadata
@@ -256,6 +272,18 @@ class ImageProcessingMixin(MCPMixin):
             # Determine pages to process
             pages_to_process = parsed_pages if parsed_pages else list(range(total_pages))
             pages_to_process = [p for p in pages_to_process if 0 <= p < total_pages]
+
+            # Setup output directory for image extraction
+            images_dir = None
+            images_extracted = 0
+            images_skipped = 0
+            extracted_image_info = []
+
+            if output_directory:
+                output_dir = validate_output_path(output_directory)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                images_dir = output_dir / "images"
+                images_dir.mkdir(parents=True, exist_ok=True)
 
             markdown_parts = []
 
@@ -293,16 +321,54 @@ class ImageProcessingMixin(MCPMixin):
 
                         for img_index, img in enumerate(image_list):
                             try:
-                                # Create MCP resource URI for the image
-                                image_id = f"page_{page_num + 1}_img_{img_index + 1}"
-                                mcp_uri = f"pdf-image://{image_id}"
-
-                                # Add markdown image reference
                                 alt_text = f"Image {img_index + 1} from page {page_num + 1}"
-                                markdown_parts.append(f"![{alt_text}]({mcp_uri})\n\n")
+
+                                if images_dir:
+                                    # Disk mode: extract image, filter by size, save to images/
+                                    xref = img[0]
+                                    pix = fitz.Pixmap(doc, xref)
+
+                                    if pix.width < min_width or pix.height < min_height:
+                                        images_skipped += 1
+                                        pix = None
+                                        continue
+
+                                    # Convert CMYK to RGB if necessary
+                                    if pix.n - pix.alpha >= 4:
+                                        pix = fitz.Pixmap(fitz.csRGB, pix)
+
+                                    base_name = input_pdf_path.stem
+                                    filename = f"{base_name}_page_{page_num + 1}_img_{img_index + 1}.{image_format}"
+                                    img_path = images_dir / filename
+
+                                    if image_format.lower() in ["jpg", "jpeg"]:
+                                        pix.save(str(img_path), "JPEG")
+                                    else:
+                                        pix.save(str(img_path), "PNG")
+
+                                    file_size = img_path.stat().st_size
+                                    extracted_image_info.append({
+                                        "filename": filename,
+                                        "path": str(img_path),
+                                        "page": page_num + 1,
+                                        "width": pix.width,
+                                        "height": pix.height,
+                                        "size_bytes": file_size
+                                    })
+                                    images_extracted += 1
+                                    pix = None
+
+                                    markdown_parts.append(f"![{alt_text}](./images/{filename})\n\n")
+                                else:
+                                    # Legacy mode: pdf-image:// MCP resource URI
+                                    image_id = f"page_{page_num + 1}_img_{img_index + 1}"
+                                    mcp_uri = f"pdf-image://{image_id}"
+                                    markdown_parts.append(f"![{alt_text}]({mcp_uri})\n\n")
 
                             except Exception as e:
                                 logger.warning(f"Failed to process image {img_index + 1} on page {page_num + 1}: {e}")
+                                if images_dir:
+                                    images_skipped += 1
 
                 except Exception as e:
                     logger.warning(f"Failed to process page {page_num + 1}: {e}")
@@ -313,12 +379,20 @@ class ImageProcessingMixin(MCPMixin):
             # Combine all markdown parts
             full_markdown = "".join(markdown_parts)
 
+            # Save markdown file if requested
+            markdown_path = None
+            if save_markdown and output_directory:
+                md_path = output_dir / f"{input_pdf_path.stem}.md"
+                with open(md_path, 'w', encoding='utf-8') as f:
+                    f.write(full_markdown)
+                markdown_path = str(md_path)
+
             # Calculate statistics
             word_count = len(full_markdown.split())
             line_count = len(full_markdown.split('\n'))
             char_count = len(full_markdown)
 
-            return {
+            result = {
                 "success": True,
                 "markdown": full_markdown,
                 "conversion_summary": {
@@ -328,11 +402,9 @@ class ImageProcessingMixin(MCPMixin):
                     "line_count": line_count,
                     "character_count": char_count,
                     "includes_images": include_images,
-                    "includes_metadata": include_metadata
-                },
-                "mcp_integration": {
-                    "image_uri_format": "pdf-image://{image_id}",
-                    "description": "Images use MCP resource URIs for seamless client integration"
+                    "includes_metadata": include_metadata,
+                    "images_extracted": images_extracted,
+                    "images_skipped": images_skipped
                 },
                 "file_info": {
                     "input_path": str(input_pdf_path),
@@ -340,6 +412,29 @@ class ImageProcessingMixin(MCPMixin):
                 },
                 "conversion_time": round(time.time() - start_time, 2)
             }
+
+            if images_dir:
+                result["image_output"] = {
+                    "images_directory": str(images_dir),
+                    "images_extracted": images_extracted,
+                    "images_skipped": images_skipped,
+                    "filter_settings": {
+                        "min_width": min_width,
+                        "min_height": min_height,
+                        "image_format": image_format
+                    },
+                    "images": extracted_image_info
+                }
+            else:
+                result["mcp_integration"] = {
+                    "image_uri_format": "pdf-image://{image_id}",
+                    "description": "Images use MCP resource URIs. Set output_directory for disk-based images with relative paths."
+                }
+
+            if markdown_path:
+                result["markdown_path"] = markdown_path
+
+            return result
 
         except Exception as e:
             error_msg = sanitize_error_message(str(e))

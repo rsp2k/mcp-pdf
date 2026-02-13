@@ -91,7 +91,7 @@ uv publish
 2. **Table Extraction**: `extract_tables` - Auto-fallback through Camelot → pdfplumber → Tabula
 3. **OCR Processing**: `ocr_pdf` - Tesseract with preprocessing options
 4. **Document Analysis**: `is_scanned_pdf`, `get_document_structure`, `extract_metadata`
-5. **Format Conversion**: `pdf_to_markdown` - Clean markdown with MCP resource URIs for images
+5. **Format Conversion**: `pdf_to_markdown` - Convert PDF to markdown. With `output_directory`, extracts images to disk with relative `./images/` paths. Without, uses `pdf-image://` MCP resource URIs (legacy).
 6. **Image Processing**: `extract_images` - Extract images with custom output paths and clean summary output
 7. **Link Extraction**: `extract_links` - Extract all hyperlinks with page filtering and type categorization
 8. **PDF Forms**: `extract_form_data`, `create_form_pdf`, `fill_form_pdf`, `add_form_fields` - Complete form lifecycle management
@@ -103,7 +103,8 @@ uv publish
 **Optimized for MCP Context Management:**
 - **Custom Output Paths**: `extract_images` allows users to specify where images are saved
 - **Clean Summary Output**: Returns concise extraction summary instead of verbose image metadata
-- **Resource URIs**: `pdf_to_markdown` uses `pdf-image://{image_id}` protocol for seamless client integration  
+- **Resource URIs**: `pdf_to_markdown` uses `pdf-image://{image_id}` protocol when no `output_directory` is set (legacy mode)
+- **Disk-Based Images**: When `output_directory` is provided, `pdf_to_markdown` extracts images to `{output_directory}/images/` with relative `./images/` paths — compatible with Starlight, browsers, and standard renderers  
 - **Prevents Context Overflow**: Avoids verbose output that fills client message windows
 - **User Control**: Flexible output directory support with automatic directory creation
 

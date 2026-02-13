@@ -137,7 +137,7 @@ class PDFServerOfficial:
                     "form_management": ["extract_form_data", "fill_form_pdf", "create_form_pdf"],
                     "document_assembly": ["merge_pdfs", "split_pdf", "reorder_pdf_pages"],
                     "annotations": ["add_sticky_notes", "add_highlights", "add_stamps", "extract_all_annotations"],
-                    "image_processing": ["extract_images", "pdf_to_markdown"]
+                    "image_processing": ["extract_images", "pdf_to_markdown", "extract_vector_graphics"]
                 }
             }
 
