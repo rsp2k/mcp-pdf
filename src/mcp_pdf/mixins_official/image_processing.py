@@ -215,10 +215,10 @@ class ImageProcessingMixin(MCPMixin):
     @mcp_tool(
         name="pdf_to_markdown",
         description=(
-            "Convert PDF to markdown. When output_directory is provided, images are "
-            "extracted to {output_directory}/images/ with relative ./images/ paths in "
-            "the markdown — ready for Starlight, browsers, or any renderer. "
-            "Without output_directory, images use pdf-image:// MCP resource URIs."
+            "Convert PDF to markdown and write to a .md file. Images are extracted "
+            "to {output_directory}/images/ with relative ./images/ paths. Returns "
+            "the output file path and a short preview — full markdown is in the file. "
+            "Set inline=True to get full markdown in the response instead."
         )
     )
     async def pdf_to_markdown(
@@ -231,30 +231,29 @@ class ImageProcessingMixin(MCPMixin):
         min_width: int = 100,
         min_height: int = 100,
         image_format: str = "png",
-        save_markdown: bool = False
+        inline: bool = False
     ) -> Dict[str, Any]:
         """
-        Convert PDF to clean markdown format.
+        Convert PDF to clean markdown format and write to file.
 
-        Two image modes:
-        - With output_directory: extracts images to disk, uses relative paths in markdown.
-          Images are filtered by min_width/min_height (matching extract_images behavior).
-        - Without output_directory: uses pdf-image:// MCP resource URIs (legacy behavior).
+        By default, writes markdown to a file and extracts images to an images/
+        subdirectory with relative paths. Returns file path + summary to avoid
+        filling the MCP context window. Set inline=True for full markdown in response.
 
         Args:
             pdf_path: Path to PDF file or HTTPS URL
             pages: Page numbers to convert (comma-separated, 1-based), None for all
             include_images: Whether to include images in markdown
             include_metadata: Whether to include document metadata
-            output_directory: Directory for extracted images and optional markdown file.
-                When set, images go to {output_directory}/images/ with relative paths.
-            min_width: Minimum image width to extract (only when output_directory is set)
-            min_height: Minimum image height to extract (only when output_directory is set)
-            image_format: Image format - "png" or "jpg" (only when output_directory is set)
-            save_markdown: Save markdown to {output_directory}/{filename}.md
+            output_directory: Directory for output .md file and images/ subdirectory.
+                Defaults to a temp directory if not specified.
+            min_width: Minimum image width to extract (filters small decorative images)
+            min_height: Minimum image height to extract (filters small decorative images)
+            image_format: Image format - "png" or "jpg"
+            inline: Return full markdown in response instead of writing to file
 
         Returns:
-            Dictionary containing markdown content and metadata
+            Dictionary with output_file path and summary, or full markdown if inline=True
         """
         start_time = time.time()
 
@@ -273,17 +272,18 @@ class ImageProcessingMixin(MCPMixin):
             pages_to_process = parsed_pages if parsed_pages else list(range(total_pages))
             pages_to_process = [p for p in pages_to_process if 0 <= p < total_pages]
 
-            # Setup output directory for image extraction
-            images_dir = None
+            # Setup output directory — always needed (file output is the default)
             images_extracted = 0
             images_skipped = 0
             extracted_image_info = []
 
             if output_directory:
                 output_dir = validate_output_path(output_directory)
-                output_dir.mkdir(parents=True, exist_ok=True)
-                images_dir = output_dir / "images"
-                images_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                output_dir = Path(tempfile.mkdtemp(prefix="pdf_markdown_"))
+            output_dir.mkdir(parents=True, exist_ok=True)
+            images_dir = output_dir / "images"
+            images_dir.mkdir(parents=True, exist_ok=True)
 
             markdown_parts = []
 
@@ -322,53 +322,44 @@ class ImageProcessingMixin(MCPMixin):
                         for img_index, img in enumerate(image_list):
                             try:
                                 alt_text = f"Image {img_index + 1} from page {page_num + 1}"
+                                xref = img[0]
+                                pix = fitz.Pixmap(doc, xref)
 
-                                if images_dir:
-                                    # Disk mode: extract image, filter by size, save to images/
-                                    xref = img[0]
-                                    pix = fitz.Pixmap(doc, xref)
-
-                                    if pix.width < min_width or pix.height < min_height:
-                                        images_skipped += 1
-                                        pix = None
-                                        continue
-
-                                    # Convert CMYK to RGB if necessary
-                                    if pix.n - pix.alpha >= 4:
-                                        pix = fitz.Pixmap(fitz.csRGB, pix)
-
-                                    base_name = input_pdf_path.stem
-                                    filename = f"{base_name}_page_{page_num + 1}_img_{img_index + 1}.{image_format}"
-                                    img_path = images_dir / filename
-
-                                    if image_format.lower() in ["jpg", "jpeg"]:
-                                        pix.save(str(img_path), "JPEG")
-                                    else:
-                                        pix.save(str(img_path), "PNG")
-
-                                    file_size = img_path.stat().st_size
-                                    extracted_image_info.append({
-                                        "filename": filename,
-                                        "path": str(img_path),
-                                        "page": page_num + 1,
-                                        "width": pix.width,
-                                        "height": pix.height,
-                                        "size_bytes": file_size
-                                    })
-                                    images_extracted += 1
+                                if pix.width < min_width or pix.height < min_height:
+                                    images_skipped += 1
                                     pix = None
+                                    continue
 
-                                    markdown_parts.append(f"![{alt_text}](./images/{filename})\n\n")
+                                # Convert CMYK to RGB if necessary
+                                if pix.n - pix.alpha >= 4:
+                                    pix = fitz.Pixmap(fitz.csRGB, pix)
+
+                                base_name = input_pdf_path.stem
+                                filename = f"{base_name}_page_{page_num + 1}_img_{img_index + 1}.{image_format}"
+                                img_path = images_dir / filename
+
+                                if image_format.lower() in ["jpg", "jpeg"]:
+                                    pix.save(str(img_path), "JPEG")
                                 else:
-                                    # Legacy mode: pdf-image:// MCP resource URI
-                                    image_id = f"page_{page_num + 1}_img_{img_index + 1}"
-                                    mcp_uri = f"pdf-image://{image_id}"
-                                    markdown_parts.append(f"![{alt_text}]({mcp_uri})\n\n")
+                                    pix.save(str(img_path), "PNG")
+
+                                file_size = img_path.stat().st_size
+                                extracted_image_info.append({
+                                    "filename": filename,
+                                    "path": str(img_path),
+                                    "page": page_num + 1,
+                                    "width": pix.width,
+                                    "height": pix.height,
+                                    "size_bytes": file_size
+                                })
+                                images_extracted += 1
+                                pix = None
+
+                                markdown_parts.append(f"![{alt_text}](./images/{filename})\n\n")
 
                             except Exception as e:
                                 logger.warning(f"Failed to process image {img_index + 1} on page {page_num + 1}: {e}")
-                                if images_dir:
-                                    images_skipped += 1
+                                images_skipped += 1
 
                 except Exception as e:
                     logger.warning(f"Failed to process page {page_num + 1}: {e}")
@@ -379,42 +370,57 @@ class ImageProcessingMixin(MCPMixin):
             # Combine all markdown parts
             full_markdown = "".join(markdown_parts)
 
-            # Save markdown file if requested
-            markdown_path = None
-            if save_markdown and output_directory:
-                md_path = output_dir / f"{input_pdf_path.stem}.md"
-                with open(md_path, 'w', encoding='utf-8') as f:
-                    f.write(full_markdown)
-                markdown_path = str(md_path)
-
             # Calculate statistics
             word_count = len(full_markdown.split())
             line_count = len(full_markdown.split('\n'))
             char_count = len(full_markdown)
 
-            result = {
-                "success": True,
-                "markdown": full_markdown,
-                "conversion_summary": {
-                    "pages_converted": len(pages_to_process),
-                    "total_pages": total_pages,
-                    "word_count": word_count,
-                    "line_count": line_count,
-                    "character_count": char_count,
-                    "includes_images": include_images,
-                    "includes_metadata": include_metadata,
-                    "images_extracted": images_extracted,
-                    "images_skipped": images_skipped
-                },
-                "file_info": {
-                    "input_path": str(input_pdf_path),
-                    "pages_processed": pages or "all"
-                },
-                "conversion_time": round(time.time() - start_time, 2)
+            conversion_summary = {
+                "pages_converted": len(pages_to_process),
+                "total_pages": total_pages,
+                "word_count": word_count,
+                "line_count": line_count,
+                "character_count": char_count,
+                "images_extracted": images_extracted,
+                "images_skipped": images_skipped
             }
 
-            if images_dir:
-                result["image_output"] = {
+            # Inline mode: return full markdown in response
+            if inline:
+                return {
+                    "success": True,
+                    "markdown": full_markdown,
+                    "conversion_summary": conversion_summary,
+                    "image_output": {
+                        "images_directory": str(images_dir),
+                        "images": extracted_image_info
+                    },
+                    "file_info": {
+                        "input_path": str(input_pdf_path),
+                        "pages_processed": pages or "all"
+                    },
+                    "conversion_time": round(time.time() - start_time, 2)
+                }
+
+            # File output mode (default): write .md file, return path + summary
+            md_path = output_dir / f"{input_pdf_path.stem}.md"
+            with open(md_path, 'w', encoding='utf-8') as f:
+                f.write(full_markdown)
+
+            # Build preview (first ~500 chars at sentence boundary)
+            preview = full_markdown[:500]
+            if len(full_markdown) > 500:
+                last_period = preview.rfind('.')
+                if last_period > 300:
+                    preview = preview[:last_period + 1]
+                preview += " [...]"
+
+            return {
+                "success": True,
+                "output_file": str(md_path),
+                "markdown_preview": preview,
+                "conversion_summary": conversion_summary,
+                "image_output": {
                     "images_directory": str(images_dir),
                     "images_extracted": images_extracted,
                     "images_skipped": images_skipped,
@@ -424,17 +430,14 @@ class ImageProcessingMixin(MCPMixin):
                         "image_format": image_format
                     },
                     "images": extracted_image_info
-                }
-            else:
-                result["mcp_integration"] = {
-                    "image_uri_format": "pdf-image://{image_id}",
-                    "description": "Images use MCP resource URIs. Set output_directory for disk-based images with relative paths."
-                }
-
-            if markdown_path:
-                result["markdown_path"] = markdown_path
-
-            return result
+                },
+                "file_info": {
+                    "input_path": str(input_pdf_path),
+                    "output_directory": str(output_dir),
+                    "pages_processed": pages or "all"
+                },
+                "conversion_time": round(time.time() - start_time, 2)
+            }
 
         except Exception as e:
             error_msg = sanitize_error_message(str(e))

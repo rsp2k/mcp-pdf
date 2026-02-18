@@ -3,8 +3,8 @@ Text Extraction Mixin - PDF text extraction, OCR, and scanned PDF detection
 Uses official fastmcp.contrib.mcp_mixin pattern
 """
 
-import asyncio
 import time
+import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
@@ -18,7 +18,7 @@ import io
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
 
-from ..security import validate_pdf_path, sanitize_error_message
+from ..security import validate_pdf_path, validate_output_path, sanitize_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -36,30 +36,43 @@ class TextExtractionMixin(MCPMixin):
 
     @mcp_tool(
         name="extract_text",
-        description="Extract text from PDF with intelligent method selection and automatic chunking for large files"
+        description=(
+            "Extract text from PDF and write to a .txt file. Returns the output "
+            "file path and a short preview — full text is in the file, not in the "
+            "response. Use output_directory to control where the file is saved, "
+            "or set inline=True to get full text in the response instead."
+        )
     )
     async def extract_text(
         self,
         pdf_path: str,
         pages: Optional[str] = None,
         method: str = "auto",
+        preserve_layout: bool = False,
+        output_directory: Optional[str] = None,
+        inline: bool = False,
         chunk_pages: int = 10,
-        max_tokens: int = 20000,
-        preserve_layout: bool = False
+        max_tokens: int = 20000
     ) -> Dict[str, Any]:
         """
         Extract text from PDF with intelligent method selection.
+
+        By default, writes extracted text to a file and returns the path with
+        a short preview. This prevents large extractions from filling the MCP
+        context window. Set inline=True for the old behavior (full text in response).
 
         Args:
             pdf_path: Path to PDF file or HTTPS URL
             pages: Page numbers to extract (comma-separated, 1-based), None for all
             method: Extraction method ("auto", "pymupdf", "pdfplumber", "pypdf")
-            chunk_pages: Number of pages per chunk for large files
-            max_tokens: Maximum tokens per response to prevent overflow
             preserve_layout: Whether to preserve text layout and formatting
+            output_directory: Directory to save the text file (default: temp directory)
+            inline: Return full text in response instead of writing to file
+            chunk_pages: Pages per chunk when inline=True (ignored for file output)
+            max_tokens: Max chars when inline=True (ignored for file output)
 
         Returns:
-            Dictionary containing extracted text and metadata
+            Dictionary with output_file path and summary, or full text if inline=True
         """
         start_time = time.time()
 
@@ -84,44 +97,93 @@ class TextExtractionMixin(MCPMixin):
                     "extraction_time": 0
                 }
 
-            # Check if chunking is needed
-            if len(pages_to_extract) > chunk_pages:
-                return await self._extract_text_chunked(
-                    doc, path, pages_to_extract, method, chunk_pages,
-                    max_tokens, preserve_layout, start_time
-                )
+            # Inline mode: old behavior with chunking/truncation
+            if inline:
+                if len(pages_to_extract) > chunk_pages:
+                    return await self._extract_text_chunked(
+                        doc, path, pages_to_extract, method, chunk_pages,
+                        max_tokens, preserve_layout, start_time
+                    )
 
-            # Extract text from specified pages
+                extraction_result = await self._extract_text_from_pages(
+                    doc, pages_to_extract, method, preserve_layout
+                )
+                doc.close()
+
+                if len(extraction_result["text"]) > max_tokens:
+                    truncated_text = extraction_result["text"][:max_tokens]
+                    last_period = truncated_text.rfind('.')
+                    if last_period > max_tokens * 0.8:
+                        truncated_text = truncated_text[:last_period + 1]
+                    extraction_result["text"] = truncated_text
+                    extraction_result["truncated"] = True
+                    extraction_result["truncation_reason"] = f"Response too large (>{max_tokens} chars)"
+
+                extraction_result.update({
+                    "success": True,
+                    "file_info": {
+                        "path": str(path),
+                        "total_pages": total_pages,
+                        "pages_extracted": len(pages_to_extract),
+                        "pages_requested": pages or "all"
+                    },
+                    "extraction_time": round(time.time() - start_time, 2)
+                })
+                return extraction_result
+
+            # File output mode (default): extract all requested pages, write to file
             extraction_result = await self._extract_text_from_pages(
                 doc, pages_to_extract, method, preserve_layout
             )
-
             doc.close()
 
-            # Check token limit and truncate if necessary
-            if len(extraction_result["text"]) > max_tokens:
-                truncated_text = extraction_result["text"][:max_tokens]
-                # Try to truncate at sentence boundary
-                last_period = truncated_text.rfind('.')
-                if last_period > max_tokens * 0.8:  # If we can find a good break point
-                    truncated_text = truncated_text[:last_period + 1]
+            full_text = extraction_result["text"]
 
-                extraction_result["text"] = truncated_text
-                extraction_result["truncated"] = True
-                extraction_result["truncation_reason"] = f"Response too large (>{max_tokens} chars)"
+            # Setup output directory
+            if output_directory:
+                output_dir = validate_output_path(output_directory)
+                output_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                output_dir = Path(tempfile.mkdtemp(prefix="pdf_text_"))
 
-            extraction_result.update({
+            # Write text to file
+            output_filename = f"{path.stem}.txt"
+            output_path = output_dir / output_filename
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(full_text)
+
+            # Build preview (first ~500 chars at sentence boundary)
+            preview = full_text[:500]
+            if len(full_text) > 500:
+                last_period = preview.rfind('.')
+                if last_period > 300:
+                    preview = preview[:last_period + 1]
+                preview += " [...]"
+
+            word_count = len(full_text.split())
+            char_count = len(full_text)
+            file_size = output_path.stat().st_size
+
+            return {
                 "success": True,
-                "file_info": {
-                    "path": str(path),
-                    "total_pages": total_pages,
+                "output_file": str(output_path),
+                "text_preview": preview,
+                "extraction_summary": {
+                    "word_count": word_count,
+                    "character_count": char_count,
+                    "file_size_bytes": file_size,
+                    "file_size_kb": round(file_size / 1024, 1),
                     "pages_extracted": len(pages_to_extract),
+                    "total_pages": total_pages,
+                    "method_used": extraction_result.get("method_used", method)
+                },
+                "file_info": {
+                    "input_path": str(path),
+                    "total_pages": total_pages,
                     "pages_requested": pages or "all"
                 },
                 "extraction_time": round(time.time() - start_time, 2)
-            })
-
-            return extraction_result
+            }
 
         except Exception as e:
             error_msg = sanitize_error_message(str(e))
