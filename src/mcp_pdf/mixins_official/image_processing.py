@@ -215,8 +215,9 @@ class ImageProcessingMixin(MCPMixin):
     @mcp_tool(
         name="pdf_to_markdown",
         description=(
-            "Convert PDF to markdown and write to a .md file. Images are extracted "
-            "to {output_directory}/images/ with relative ./images/ paths. Returns "
+            "Convert PDF to markdown and write to a .md file. Raster images are "
+            "extracted to {output_directory}/images/ and vector graphics (charts, "
+            "schematics, diagrams) to {output_directory}/vectors/ as SVG. Returns "
             "the output file path and a short preview — full markdown is in the file. "
             "Set inline=True to get full markdown in the response instead."
         )
@@ -231,19 +232,24 @@ class ImageProcessingMixin(MCPMixin):
         min_width: int = 100,
         min_height: int = 100,
         image_format: str = "png",
-        inline: bool = False
+        inline: bool = False,
+        include_vectors: bool = True,
+        vector_min_drawings: int = 5,
+        vector_min_complexity: int = 50,
     ) -> Dict[str, Any]:
         """
         Convert PDF to clean markdown format and write to file.
 
-        By default, writes markdown to a file and extracts images to an images/
-        subdirectory with relative paths. Returns file path + summary to avoid
-        filling the MCP context window. Set inline=True for full markdown in response.
+        By default, writes markdown to a file, extracts raster images to an images/
+        subdirectory, and extracts significant vector graphics (charts, schematics,
+        diagrams) to a vectors/ subdirectory as SVG. Returns file path + summary to
+        avoid filling the MCP context window. Set inline=True for full markdown in
+        response.
 
         Args:
             pdf_path: Path to PDF file or HTTPS URL
             pages: Page numbers to convert (comma-separated, 1-based), None for all
-            include_images: Whether to include images in markdown
+            include_images: Whether to include raster images in markdown
             include_metadata: Whether to include document metadata
             output_directory: Directory for output .md file and images/ subdirectory.
                 Defaults to a temp directory if not specified.
@@ -251,6 +257,10 @@ class ImageProcessingMixin(MCPMixin):
             min_height: Minimum image height to extract (filters small decorative images)
             image_format: Image format - "png" or "jpg"
             inline: Return full markdown in response instead of writing to file
+            include_vectors: Extract significant vector graphics as SVG (default: True).
+                Detects charts, schematics, and technical drawings automatically.
+            vector_min_drawings: Minimum drawing count per page to consider (default: 5)
+            vector_min_complexity: Minimum total path items for extraction (default: 50)
 
         Returns:
             Dictionary with output_file path and summary, or full markdown if inline=True
@@ -275,7 +285,9 @@ class ImageProcessingMixin(MCPMixin):
             # Setup output directory — always needed (file output is the default)
             images_extracted = 0
             images_skipped = 0
+            vectors_extracted = 0
             extracted_image_info = []
+            extracted_vector_info = []
 
             if output_directory:
                 output_dir = validate_output_path(output_directory)
@@ -284,6 +296,9 @@ class ImageProcessingMixin(MCPMixin):
             output_dir.mkdir(parents=True, exist_ok=True)
             images_dir = output_dir / "images"
             images_dir.mkdir(parents=True, exist_ok=True)
+            if include_vectors:
+                vectors_dir = output_dir / "vectors"
+                vectors_dir.mkdir(parents=True, exist_ok=True)
 
             markdown_parts = []
 
@@ -361,6 +376,37 @@ class ImageProcessingMixin(MCPMixin):
                                 logger.warning(f"Failed to process image {img_index + 1} on page {page_num + 1}: {e}")
                                 images_skipped += 1
 
+                    # Extract significant vector graphics as SVG
+                    if include_vectors:
+                        try:
+                            drawings = page.get_drawings()
+                            if self._is_vector_significant(
+                                drawings, vector_min_drawings, vector_min_complexity
+                            ):
+                                base_name = input_pdf_path.stem
+                                svg_content = page.get_svg_image(text_as_path=False)
+                                svg_filename = f"{base_name}_page_{page_num + 1}.svg"
+                                svg_path = vectors_dir / svg_filename
+                                with open(svg_path, 'w', encoding='utf-8') as f:
+                                    f.write(svg_content)
+                                file_size = svg_path.stat().st_size
+                                extracted_vector_info.append({
+                                    "filename": svg_filename,
+                                    "path": str(svg_path),
+                                    "page": page_num + 1,
+                                    "drawing_count": len(drawings),
+                                    "total_items": sum(
+                                        len(d.get("items", [])) for d in drawings
+                                    ),
+                                    "size_bytes": file_size,
+                                })
+                                vectors_extracted += 1
+                                markdown_parts.append(
+                                    f"![Page {page_num + 1} diagram](./vectors/{svg_filename})\n\n"
+                                )
+                        except Exception as e:
+                            logger.warning(f"Failed to extract vectors from page {page_num + 1}: {e}")
+
                 except Exception as e:
                     logger.warning(f"Failed to process page {page_num + 1}: {e}")
                     markdown_parts.append(f"*[Error processing page {page_num + 1}: {str(e)[:100]}]*\n\n")
@@ -382,25 +428,33 @@ class ImageProcessingMixin(MCPMixin):
                 "line_count": line_count,
                 "character_count": char_count,
                 "images_extracted": images_extracted,
-                "images_skipped": images_skipped
+                "images_skipped": images_skipped,
+                "vectors_extracted": vectors_extracted,
             }
 
             # Inline mode: return full markdown in response
             if inline:
-                return {
+                result = {
                     "success": True,
                     "markdown": full_markdown,
                     "conversion_summary": conversion_summary,
                     "image_output": {
                         "images_directory": str(images_dir),
-                        "images": extracted_image_info
+                        "images": extracted_image_info,
                     },
                     "file_info": {
                         "input_path": str(input_pdf_path),
-                        "pages_processed": pages or "all"
+                        "pages_processed": pages or "all",
                     },
-                    "conversion_time": round(time.time() - start_time, 2)
+                    "conversion_time": round(time.time() - start_time, 2),
                 }
+                if include_vectors and extracted_vector_info:
+                    result["vector_output"] = {
+                        "vectors_directory": str(vectors_dir),
+                        "vectors_extracted": vectors_extracted,
+                        "vectors": extracted_vector_info,
+                    }
+                return result
 
             # File output mode (default): write .md file, return path + summary
             md_path = output_dir / f"{input_pdf_path.stem}.md"
@@ -415,7 +469,7 @@ class ImageProcessingMixin(MCPMixin):
                     preview = preview[:last_period + 1]
                 preview += " [...]"
 
-            return {
+            result = {
                 "success": True,
                 "output_file": str(md_path),
                 "markdown_preview": preview,
@@ -427,17 +481,24 @@ class ImageProcessingMixin(MCPMixin):
                     "filter_settings": {
                         "min_width": min_width,
                         "min_height": min_height,
-                        "image_format": image_format
+                        "image_format": image_format,
                     },
-                    "images": extracted_image_info
+                    "images": extracted_image_info,
                 },
                 "file_info": {
                     "input_path": str(input_pdf_path),
                     "output_directory": str(output_dir),
-                    "pages_processed": pages or "all"
+                    "pages_processed": pages or "all",
                 },
-                "conversion_time": round(time.time() - start_time, 2)
+                "conversion_time": round(time.time() - start_time, 2),
             }
+            if include_vectors and extracted_vector_info:
+                result["vector_output"] = {
+                    "vectors_directory": str(vectors_dir),
+                    "vectors_extracted": vectors_extracted,
+                    "vectors": extracted_vector_info,
+                }
+            return result
 
         except Exception as e:
             error_msg = sanitize_error_message(str(e))
@@ -481,6 +542,26 @@ class ImageProcessingMixin(MCPMixin):
         # Very basic check - could be enhanced
         markdown_patterns = ['# ', '## ', '### ', '* ', '- ', '1. ', '**', '__']
         return any(pattern in line for pattern in markdown_patterns)
+
+    def _is_vector_significant(self, drawings, min_drawings=5, min_complexity=50):
+        """Detect if a page's drawings represent meaningful vector content (charts, schematics).
+
+        Uses a multi-tier heuristic adapted from extract_charts:
+        1. Drawing count gate — filters pages with only border lines
+        2. Total path complexity — charts and schematics have many path items
+        3. Single complex drawing — catches large diagrams even on sparse pages
+        """
+        if len(drawings) < min_drawings:
+            return False
+        total_items = sum(len(d.get("items", [])) for d in drawings)
+        if total_items >= min_complexity:
+            return True
+        for d in drawings:
+            items = d.get("items", [])
+            rect = d.get("rect", fitz.Rect(0, 0, 0, 0))
+            if len(items) > 20 and (rect.width > 200 or rect.height > 150):
+                return True
+        return False
 
     @mcp_tool(
         name="extract_vector_graphics",

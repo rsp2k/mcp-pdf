@@ -91,7 +91,7 @@ uv publish
 2. **Table Extraction**: `extract_tables` - Auto-fallback through Camelot → pdfplumber → Tabula
 3. **OCR Processing**: `ocr_pdf` - Tesseract with preprocessing options
 4. **Document Analysis**: `is_scanned_pdf`, `get_document_structure`, `extract_metadata`
-5. **Format Conversion**: `pdf_to_markdown` - Writes markdown + extracted images to disk by default, returns path + preview. Images use relative `./images/` paths. Set `inline=True` for full markdown in response.
+5. **Format Conversion**: `pdf_to_markdown` - Writes markdown + extracted raster images and vector graphics (SVG) to disk by default, returns path + preview. Images use relative `./images/` paths, vectors use `./vectors/` paths. Set `inline=True` for full markdown in response. Set `include_vectors=False` to skip vector extraction.
 6. **Image Processing**: `extract_images` - Extract images with custom output paths and clean summary output
 7. **Link Extraction**: `extract_links` - Extract all hyperlinks with page filtering and type categorization
 8. **PDF Forms**: `extract_form_data`, `create_form_pdf`, `fill_form_pdf`, `add_form_fields` - Complete form lifecycle management
@@ -104,7 +104,8 @@ uv publish
 - **Custom Output Paths**: `extract_images` allows users to specify where images are saved
 - **Clean Summary Output**: Returns concise extraction summary instead of verbose image metadata
 - **File-First Output**: `extract_text` and `pdf_to_markdown` write results to files by default, returning paths + short previews instead of full content — prevents MCP context overflow on large PDFs
-- **Disk-Based Images**: `pdf_to_markdown` always extracts images to `{output_directory}/images/` with relative `./images/` paths — compatible with Starlight, browsers, and standard renderers
+- **Disk-Based Images**: `pdf_to_markdown` extracts raster images to `{output_directory}/images/` with relative `./images/` paths — compatible with Starlight, browsers, and standard renderers
+- **Vector Graphics**: `pdf_to_markdown` auto-detects significant vector content (charts, schematics, diagrams) and extracts full-page SVGs to `{output_directory}/vectors/` with relative `./vectors/` paths. Controlled by `include_vectors` parameter (default: True)
 - **Inline Escape Hatch**: Both tools accept `inline=True` to return full content in the response for small queries
 - **User Control**: Flexible output directory support with automatic directory creation
 
