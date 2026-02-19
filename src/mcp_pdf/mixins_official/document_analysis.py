@@ -30,7 +30,6 @@ class DocumentAnalysisMixin(MCPMixin):
 
     def __init__(self):
         super().__init__()
-        self.max_file_size = 100 * 1024 * 1024  # 100MB
 
     @mcp_tool(
         name="extract_metadata",

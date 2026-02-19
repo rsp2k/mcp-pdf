@@ -136,6 +136,7 @@ Critical system dependencies:
 Environment variables (optional):
 - `TESSDATA_PREFIX`: Tesseract language data location
 - `PDF_TEMP_DIR`: Temporary file processing directory (defaults to `/tmp/mcp-pdf-processing`)
+- `MCP_PDF_MAX_SIZE`: Maximum PDF file size in MB (e.g., `500` for 500MB). Set to `0` or leave empty to disable the limit (default: disabled)
 - `MCP_PDF_ALLOWED_PATHS`: Colon-separated list of allowed output directories (e.g., `/tmp:/home/user/documents:/var/output`)
   - If unset: Allows writes to any directory with security warnings
   - If set: Restricts file outputs to specified directories only
@@ -151,7 +152,7 @@ This server implements defense-in-depth, but remember: **application-level secur
 **Application-Level Protections (Security Theater):**
 
 **Input Validation:**
-- File size limits: 100MB for PDFs, 50MB for images
+- File size limits: 50MB for images. PDF size limit controlled by `MCP_PDF_MAX_SIZE` env var (in MB); disabled by default
 - Page count limits: Max 1000 pages per document
 - Path traversal protection for all file operations
 - JSON input size limits (10KB) to prevent DoS attacks

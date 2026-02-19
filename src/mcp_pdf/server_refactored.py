@@ -31,7 +31,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Security Configuration
-MAX_PDF_SIZE = 100 * 1024 * 1024  # 100MB
 MAX_IMAGE_SIZE = 50 * 1024 * 1024  # 50MB
 MAX_PAGES_PROCESS = 1000
 MAX_JSON_SIZE = 10000  # 10KB for JSON parameters
@@ -83,7 +82,7 @@ class PDFToolsServer:
     def _load_configuration(self) -> Dict[str, Any]:
         """Load server configuration from environment and defaults"""
         return {
-            "max_pdf_size": int(os.getenv("MAX_PDF_SIZE", MAX_PDF_SIZE)),
+            "max_pdf_size": int(os.getenv("MCP_PDF_MAX_SIZE", "0")) * 1024 * 1024 if os.getenv("MCP_PDF_MAX_SIZE", "").strip() not in ("", "0") else 0,
             "max_image_size": int(os.getenv("MAX_IMAGE_SIZE", MAX_IMAGE_SIZE)),
             "max_pages": int(os.getenv("MAX_PAGES_PROCESS", MAX_PAGES_PROCESS)),
             "processing_timeout": int(os.getenv("PROCESSING_TIMEOUT", PROCESSING_TIMEOUT)),

@@ -20,7 +20,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # Security Configuration
-MAX_PDF_SIZE = 100 * 1024 * 1024  # 100MB
+# MCP_PDF_MAX_SIZE: max PDF size in MB, or "0" / empty to disable the limit
+_max_size_env = os.getenv("MCP_PDF_MAX_SIZE", "").strip()
+MAX_PDF_SIZE = int(_max_size_env) * 1024 * 1024 if _max_size_env and _max_size_env != "0" else 0
+
 MAX_IMAGE_SIZE = 50 * 1024 * 1024  # 50MB
 MAX_PAGES_PROCESS = 1000
 MAX_JSON_SIZE = 10000  # 10KB for JSON parameters
@@ -113,10 +116,11 @@ async def validate_pdf_path(pdf_path: str) -> Path:
     if not path.is_file():
         raise ValueError(f"Path is not a file: {path}")
 
-    # Check file size
-    file_size = path.stat().st_size
-    if file_size > MAX_PDF_SIZE:
-        raise ValueError(f"PDF file too large: {file_size / (1024*1024):.1f}MB > {MAX_PDF_SIZE / (1024*1024)}MB")
+    # Check file size (skip when MAX_PDF_SIZE is 0 / disabled)
+    if MAX_PDF_SIZE:
+        file_size = path.stat().st_size
+        if file_size > MAX_PDF_SIZE:
+            raise ValueError(f"PDF file too large: {file_size / (1024*1024):.1f}MB > {MAX_PDF_SIZE / (1024*1024):.0f}MB limit (set MCP_PDF_MAX_SIZE=0 to disable)")
 
     # Basic PDF header validation
     try:
@@ -162,8 +166,7 @@ async def _download_url_safely(url: str) -> Path:
 
     # Check if already cached
     if cached_file.exists():
-        # Validate cached file
-        if cached_file.stat().st_size <= MAX_PDF_SIZE:
+        if not MAX_PDF_SIZE or cached_file.stat().st_size <= MAX_PDF_SIZE:
             logger.info(f"Using cached PDF: {cached_file}")
             return cached_file
         else:
@@ -185,10 +188,13 @@ async def _download_url_safely(url: str) -> Path:
                 with open(cached_file, 'wb') as f:
                     async for chunk in response.aiter_bytes(chunk_size=8192):
                         downloaded_size += len(chunk)
-                        if downloaded_size > MAX_PDF_SIZE:
+                        if MAX_PDF_SIZE and downloaded_size > MAX_PDF_SIZE:
                             f.close()
                             cached_file.unlink()
-                            raise ValueError(f"Downloaded file too large: {downloaded_size / (1024*1024):.1f}MB")
+                            raise ValueError(
+                                f"Downloaded file too large: {downloaded_size / (1024*1024):.1f}MB "
+                                f"> {MAX_PDF_SIZE / (1024*1024):.0f}MB limit (set MCP_PDF_MAX_SIZE=0 to disable)"
+                            )
                         f.write(chunk)
 
         # Set secure permissions

@@ -59,7 +59,7 @@ class PDFServerOfficial:
     def _load_configuration(self) -> Dict[str, Any]:
         """Load server configuration from environment and defaults"""
         return {
-            "max_pdf_size": int(os.getenv("MAX_PDF_SIZE", str(100 * 1024 * 1024))),  # 100MB default
+            "max_pdf_size": int(os.getenv("MCP_PDF_MAX_SIZE", "0")) * 1024 * 1024 if os.getenv("MCP_PDF_MAX_SIZE", "").strip() not in ("", "0") else 0,
             "cache_dir": Path(os.getenv("PDF_TEMP_DIR", "/tmp/mcp-pdf-processing")),
             "debug": os.getenv("DEBUG", "false").lower() == "true",
             "allowed_domains": os.getenv("ALLOWED_DOMAINS", "").split(",") if os.getenv("ALLOWED_DOMAINS") else [],

@@ -38,7 +38,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Security Configuration
-MAX_PDF_SIZE = 100 * 1024 * 1024  # 100MB
+# MCP_PDF_MAX_SIZE: max PDF size in MB, or "0" / empty to disable the limit
+_max_size_env = os.getenv("MCP_PDF_MAX_SIZE", "").strip()
+MAX_PDF_SIZE = int(_max_size_env) * 1024 * 1024 if _max_size_env and _max_size_env != "0" else 0
 MAX_IMAGE_SIZE = 50 * 1024 * 1024  # 50MB
 MAX_PAGES_PROCESS = 1000
 MAX_JSON_SIZE = 10000  # 10KB for JSON parameters
@@ -335,8 +337,7 @@ async def download_pdf_from_url(url: str) -> Path:
                 
                 # Check content length header
                 content_length = response.headers.get('content-length')
-                if content_length and int(content_length) > MAX_PDF_SIZE:
-                    raise ValueError(f"PDF file too large: {content_length} bytes > {MAX_PDF_SIZE}")
+                # Size limit delegated to security.py (MCP_PDF_MAX_SIZE env var)
                 
                 # Check content type
                 content_type = response.headers.get("content-type", "").lower()
@@ -355,16 +356,15 @@ async def download_pdf_from_url(url: str) -> Path:
                     content = first_chunk
                     async for chunk in response.aiter_bytes(chunk_size=8192):
                         content += chunk
-                        # Check size as we download
-                        if len(content) > MAX_PDF_SIZE:
-                            raise ValueError(f"PDF file too large: {len(content)} bytes > {MAX_PDF_SIZE}")
+                        if MAX_PDF_SIZE and len(content) > MAX_PDF_SIZE:
+                            raise ValueError(f"PDF file too large (set MCP_PDF_MAX_SIZE=0 to disable)")
                 else:
                     # Read all content with size checking
                     content = b""
                     async for chunk in response.aiter_bytes(chunk_size=8192):
                         content += chunk
-                        if len(content) > MAX_PDF_SIZE:
-                            raise ValueError(f"PDF file too large: {len(content)} bytes > {MAX_PDF_SIZE}")
+                        if MAX_PDF_SIZE and len(content) > MAX_PDF_SIZE:
+                            raise ValueError(f"PDF file too large (set MCP_PDF_MAX_SIZE=0 to disable)")
                 
                 # Double-check magic bytes
                 if not content.startswith(b"%PDF"):
@@ -410,10 +410,11 @@ async def validate_pdf_path(pdf_path: str) -> Path:
     if not path.suffix.lower() == '.pdf':
         raise ValueError(f"Not a PDF file: {pdf_path}")
     
-    # Check file size
-    file_size = path.stat().st_size
-    if file_size > MAX_PDF_SIZE:
-        raise ValueError(f"PDF file too large: {file_size} bytes > {MAX_PDF_SIZE}")
+    # Check file size (skip when MCP_PDF_MAX_SIZE is 0 / disabled)
+    if MAX_PDF_SIZE:
+        file_size = path.stat().st_size
+        if file_size > MAX_PDF_SIZE:
+            raise ValueError(f"PDF file too large (set MCP_PDF_MAX_SIZE=0 to disable)")
     
     return path
 
