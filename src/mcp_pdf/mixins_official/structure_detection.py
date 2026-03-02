@@ -352,18 +352,33 @@ class StructureDetectionMixin(MCPMixin):
                     line_is_bold = False
                     line_y = line.get("bbox", [0, 0, 0, 0])[1]
 
-                    for span in line.get("spans", []):
+                    spans = line.get("spans", [])
+
+                    # First pass: identify which spans are heading-sized
+                    span_roles = []
+                    for span in spans:
                         sz = round(span["size"], 1)
-                        if sz in size_to_level:
+                        is_heading = sz in size_to_level
+                        span_roles.append((span, sz, is_heading))
+
+                    # Second pass: collect heading spans AND sandwiched
+                    # non-heading spans (superscripts like ² in I²C)
+                    for idx, (span, sz, is_heading) in enumerate(span_roles):
+                        if is_heading:
                             line_text_parts.append(span["text"])
                             line_size = sz
                             if span.get("flags", 0) & 16:
                                 line_is_bold = True
+                        elif line_text_parts and idx + 1 < len(span_roles):
+                            # Non-heading span between heading spans —
+                            # likely a superscript/subscript (e.g. ² in I²C)
+                            if span_roles[idx + 1][2]:  # next span is heading
+                                line_text_parts.append(span["text"])
 
                     if not line_text_parts or line_size is None:
                         continue
 
-                    heading_text = " ".join(line_text_parts).strip()
+                    heading_text = "".join(line_text_parts).strip()
                     if not heading_text:
                         continue
 
@@ -423,13 +438,18 @@ class StructureDetectionMixin(MCPMixin):
                 match = re.search(pat, search_text, re.IGNORECASE | re.MULTILINE)
                 if match:
                     matched_text = match.group(0).strip()
-                    # Try to grab the rest of the line as the heading title
-                    line_end = search_text.find("\n", match.end())
+                    # Grab the heading title up to the first newline
+                    line_end = search_text.find("\n", match.start())
                     if line_end == -1:
-                        line_end = min(match.end() + 120, len(search_text))
+                        line_end = len(search_text)
                     title = search_text[match.start():line_end].strip()
-                    if len(title) > 120:
-                        title = title[:120].rstrip()
+                    # Cap title length to avoid grabbing full sentences
+                    if len(title) > 80:
+                        title = title[:80].rstrip()
+                        # Try to break at a word boundary
+                        last_space = title.rfind(" ", 40)
+                        if last_space > 0:
+                            title = title[:last_space]
 
                     # Confidence varies: exact first-line match is higher
                     confidence = 0.70
@@ -635,7 +655,8 @@ class StructureDetectionMixin(MCPMixin):
         Convert a heading title into a filesystem-safe directory name.
 
         Replaces special characters with underscores, strips leading/trailing
-        underscores and whitespace, and truncates to 80 characters.
+        underscores and whitespace, and truncates to 50 characters at a word
+        boundary for clean directory listings.
         """
         # Replace anything that isn't alphanumeric, space, hyphen, or underscore
         safe = re.sub(r"[^\w\s-]", "_", title)
@@ -643,9 +664,13 @@ class StructureDetectionMixin(MCPMixin):
         safe = re.sub(r"[\s_]+", "_", safe)
         # Strip leading/trailing underscores and whitespace
         safe = safe.strip("_ ")
-        # Truncate
-        if len(safe) > 80:
-            safe = safe[:80].rstrip("_")
+        # Truncate at word boundary for clean names
+        if len(safe) > 50:
+            truncated = safe[:50]
+            last_sep = truncated.rfind("_", 20)
+            if last_sep > 0:
+                truncated = truncated[:last_sep]
+            safe = truncated.rstrip("_")
         return safe or "untitled"
 
     # ------------------------------------------------------------------
