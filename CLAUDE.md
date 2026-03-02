@@ -91,12 +91,13 @@ uv publish
 2. **Table Extraction**: `extract_tables` - Auto-fallback through Camelot → pdfplumber → Tabula
 3. **OCR Processing**: `ocr_pdf` - Tesseract with preprocessing options
 4. **Document Analysis**: `is_scanned_pdf`, `get_document_structure`, `extract_metadata`
-5. **Format Conversion**: `pdf_to_markdown` - Writes markdown + extracted raster images and vector graphics (SVG) to disk by default, returns path + preview. Images use relative `./images/` paths, vectors use `./vectors/` paths. Set `inline=True` for full markdown in response. Set `include_vectors=False` to skip vector extraction.
+5. **Format Conversion**: `pdf_to_markdown` - Writes markdown + extracted raster images and vector graphics (SVG) to disk by default, returns path + preview. Images use relative `./images/` paths, vectors use `./vectors/` paths. Set `inline=True` for full markdown in response. Set `include_vectors=False` to skip vector extraction. Use `output_filename` to override the default .md filename. When `include_vectors=True`, returns `vector_diagnostics` showing which pages had drawings below the complexity threshold. Set `vector_fallback_raster=True` to render those sub-threshold pages as full-page raster images (PNG at 150 DPI) instead of skipping them.
 6. **Image Processing**: `extract_images` - Extract images with custom output paths and clean summary output
 7. **Link Extraction**: `extract_links` - Extract all hyperlinks with page filtering and type categorization
 8. **PDF Forms**: `extract_form_data`, `create_form_pdf`, `fill_form_pdf`, `add_form_fields` - Complete form lifecycle management
 9. **Document Assembly**: `merge_pdfs`, `split_pdf_by_pages`, `reorder_pdf_pages` - PDF manipulation and organization
 10. **Annotations & Markup**: `add_sticky_notes`, `add_highlights`, `add_stamps`, `add_video_notes`, `extract_all_annotations` - Collaboration and multimedia review tools
+11. **Structure Detection**: `detect_structure`, `split_pdf_by_structure`, `batch_extract` - Chapter-aware document analysis and extraction. `detect_structure` finds headings via bookmarks, font-size heuristics, and numbering patterns. `split_pdf_by_structure` auto-splits into per-chapter directories with markdown + images. `batch_extract` processes user-specified page ranges in a single call (replaces 24+ individual tool calls).
 
 ### MCP Client-Friendly Design
 

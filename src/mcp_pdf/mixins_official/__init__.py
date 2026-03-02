@@ -17,6 +17,7 @@ from .security_analysis import SecurityAnalysisMixin
 from .content_analysis import ContentAnalysisMixin
 from .pdf_utilities import PDFUtilitiesMixin
 from .misc_tools import MiscToolsMixin
+from .structure_detection import StructureDetectionMixin
 
 __all__ = [
     "TextExtractionMixin",
@@ -31,4 +32,5 @@ __all__ = [
     "ContentAnalysisMixin",
     "PDFUtilitiesMixin",
     "MiscToolsMixin",
+    "StructureDetectionMixin",
 ]

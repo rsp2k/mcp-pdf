@@ -218,7 +218,10 @@ class ImageProcessingMixin(MCPMixin):
             "extracted to {output_directory}/images/ and vector graphics (charts, "
             "schematics, diagrams) to {output_directory}/vectors/ as SVG. Returns "
             "the output file path and a short preview — full markdown is in the file. "
-            "Set inline=True to get full markdown in the response instead."
+            "Set inline=True to get full markdown in the response instead. "
+            "Use output_filename to override the default .md filename. "
+            "Set vector_fallback_raster=True to render pages with sub-threshold "
+            "drawings as raster images instead of skipping them entirely."
         )
     )
     async def pdf_to_markdown(
@@ -228,6 +231,7 @@ class ImageProcessingMixin(MCPMixin):
         include_images: bool = True,
         include_metadata: bool = True,
         output_directory: Optional[str] = None,
+        output_filename: Optional[str] = None,
         min_width: int = 100,
         min_height: int = 100,
         image_format: str = "png",
@@ -235,6 +239,7 @@ class ImageProcessingMixin(MCPMixin):
         include_vectors: bool = True,
         vector_min_drawings: int = 5,
         vector_min_complexity: int = 50,
+        vector_fallback_raster: bool = False,
     ) -> Dict[str, Any]:
         """
         Convert PDF to clean markdown format and write to file.
@@ -252,6 +257,8 @@ class ImageProcessingMixin(MCPMixin):
             include_metadata: Whether to include document metadata
             output_directory: Directory for output .md file and images/ subdirectory.
                 Defaults to a temp directory if not specified.
+            output_filename: Custom filename for the output .md file (e.g., "chapter_1.md").
+                Defaults to the PDF filename with .md extension.
             min_width: Minimum image width to extract (filters small decorative images)
             min_height: Minimum image height to extract (filters small decorative images)
             image_format: Image format - "png" or "jpg"
@@ -260,6 +267,10 @@ class ImageProcessingMixin(MCPMixin):
                 Detects charts, schematics, and technical drawings automatically.
             vector_min_drawings: Minimum drawing count per page to consider (default: 5)
             vector_min_complexity: Minimum total path items for extraction (default: 50)
+            vector_fallback_raster: When True, pages with drawings below the vector
+                complexity threshold are rendered as full-page raster images (PNG at
+                150 DPI) instead of being skipped. Captures charts and diagrams that
+                are too simple for SVG extraction but still visually meaningful.
 
         Returns:
             Dictionary with output_file path and summary, or full markdown if inline=True
@@ -285,8 +296,10 @@ class ImageProcessingMixin(MCPMixin):
             images_extracted = 0
             images_skipped = 0
             vectors_extracted = 0
+            raster_fallbacks = 0
             extracted_image_info = []
             extracted_vector_info = []
+            vector_diagnostics = []
 
             if output_directory:
                 output_dir = validate_output_path(output_directory)
@@ -403,6 +416,49 @@ class ImageProcessingMixin(MCPMixin):
                                 markdown_parts.append(
                                     f"![Page {page_num + 1} diagram](./vectors/{svg_filename})\n\n"
                                 )
+                            elif drawings:
+                                # Page has drawings but below SVG complexity threshold
+                                diag_entry = {
+                                    "page": page_num + 1,
+                                    "drawing_count": len(drawings),
+                                    "total_path_items": sum(len(d.get("items", [])) for d in drawings),
+                                    "raster_images_on_page": len(page.get_images()),
+                                }
+
+                                if vector_fallback_raster:
+                                    # Render full page as raster image at 150 DPI
+                                    try:
+                                        base_name = input_pdf_path.stem
+                                        pix = page.get_pixmap(dpi=150)
+                                        fallback_filename = f"{base_name}_page_{page_num + 1}_fallback.png"
+                                        fallback_path = images_dir / fallback_filename
+                                        pix.save(str(fallback_path))
+                                        file_size = fallback_path.stat().st_size
+                                        extracted_image_info.append({
+                                            "filename": fallback_filename,
+                                            "path": str(fallback_path),
+                                            "page": page_num + 1,
+                                            "width": pix.width,
+                                            "height": pix.height,
+                                            "size_bytes": file_size,
+                                            "type": "vector_fallback",
+                                        })
+                                        raster_fallbacks += 1
+                                        pix = None
+                                        markdown_parts.append(
+                                            f"![Page {page_num + 1} content](./images/{fallback_filename})\n\n"
+                                        )
+                                        diag_entry["reason"] = "raster_fallback_rendered"
+                                    except Exception as fb_exc:
+                                        logger.warning(
+                                            "Raster fallback failed for page %d: %s",
+                                            page_num + 1, fb_exc,
+                                        )
+                                        diag_entry["reason"] = "raster_fallback_failed"
+                                else:
+                                    diag_entry["reason"] = "below_complexity_threshold"
+
+                                vector_diagnostics.append(diag_entry)
                         except Exception as e:
                             logger.warning(f"Failed to extract vectors from page {page_num + 1}: {e}")
 
@@ -429,6 +485,7 @@ class ImageProcessingMixin(MCPMixin):
                 "images_extracted": images_extracted,
                 "images_skipped": images_skipped,
                 "vectors_extracted": vectors_extracted,
+                "raster_fallbacks": raster_fallbacks,
             }
 
             # Inline mode: return full markdown in response
@@ -453,10 +510,22 @@ class ImageProcessingMixin(MCPMixin):
                         "vectors_extracted": vectors_extracted,
                         "vectors": extracted_vector_info,
                     }
+                if include_vectors:
+                    result["vector_diagnostics"] = {
+                        "pages_with_vectors": vectors_extracted,
+                        "pages_with_drawings_skipped": len(vector_diagnostics),
+                        "pages_analyzed": len(pages_to_process),
+                        "skipped_pages": vector_diagnostics[:20],
+                    }
                 return result
 
             # File output mode (default): write .md file, return path + summary
-            md_path = output_dir / f"{input_pdf_path.stem}.md"
+            if output_filename:
+                if not output_filename.endswith('.md'):
+                    output_filename += '.md'
+                md_path = output_dir / output_filename
+            else:
+                md_path = output_dir / f"{input_pdf_path.stem}.md"
             with open(md_path, 'w', encoding='utf-8') as f:
                 f.write(full_markdown)
 
@@ -496,6 +565,13 @@ class ImageProcessingMixin(MCPMixin):
                     "vectors_directory": str(vectors_dir),
                     "vectors_extracted": vectors_extracted,
                     "vectors": extracted_vector_info,
+                }
+            if include_vectors:
+                result["vector_diagnostics"] = {
+                    "pages_with_vectors": vectors_extracted,
+                    "pages_with_drawings_skipped": len(vector_diagnostics),
+                    "pages_analyzed": len(pages_to_process),
+                    "skipped_pages": vector_diagnostics[:20],
                 }
             return result
 
