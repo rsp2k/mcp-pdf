@@ -97,7 +97,7 @@ uv publish
 8. **PDF Forms**: `extract_form_data`, `create_form_pdf`, `fill_form_pdf`, `add_form_fields` - Complete form lifecycle management
 9. **Document Assembly**: `merge_pdfs`, `split_pdf_by_pages`, `reorder_pdf_pages` - PDF manipulation and organization
 10. **Annotations & Markup**: `add_sticky_notes`, `add_highlights`, `add_stamps`, `add_video_notes`, `extract_all_annotations` - Collaboration and multimedia review tools
-11. **Structure Detection**: `detect_structure`, `split_pdf_by_structure`, `batch_extract` - Chapter-aware document analysis and extraction. `detect_structure` finds headings via bookmarks, font-size heuristics, and numbering patterns. `split_pdf_by_structure` auto-splits into per-chapter directories with markdown + images. `batch_extract` processes user-specified page ranges in a single call (replaces 24+ individual tool calls).
+11. **Structure Detection**: `detect_structure`, `split_pdf_by_structure`, `batch_extract` - Chapter-aware document analysis and extraction. `detect_structure` finds headings via bookmarks, font-size heuristics, and numbering patterns. Writes full structure to a JSON file by default, returns compact summary + path (~1k tokens vs ~20k inline). Set `inline=True` for full data in response. `split_pdf_by_structure` auto-splits into per-chapter directories with markdown + images. `batch_extract` processes user-specified page ranges in a single call (replaces 24+ individual tool calls).
 
 ### MCP Client-Friendly Design
 

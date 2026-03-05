@@ -63,8 +63,9 @@ class StructureDetectionMixin(MCPMixin):
         description=(
             "Detect logical structure (chapters, sections, headings) of a PDF "
             "using bookmarks, font-size analysis, and numbering patterns. "
-            "Returns a hierarchical section tree and a flat boundary list "
-            "with confidence scores for each detected heading."
+            "By default writes full structure to a JSON file and returns a "
+            "compact summary with the file path. Set inline=True to return "
+            "the complete structure in the response (use for small documents)."
         ),
     )
     async def detect_structure(
@@ -75,6 +76,8 @@ class StructureDetectionMixin(MCPMixin):
         heading_pattern: Optional[str] = None,
         max_heading_levels: int = 3,
         min_confidence: float = 0.5,
+        output_directory: Optional[str] = None,
+        inline: bool = False,
     ) -> Dict[str, Any]:
         """
         Detect logical document structure.
@@ -91,10 +94,15 @@ class StructureDetectionMixin(MCPMixin):
             heading_pattern: Optional user-supplied regex for headings.
             max_heading_levels: Maximum heading depth to report (1-6).
             min_confidence: Drop boundaries below this confidence (0-1).
+            output_directory: Directory for the structure JSON file.
+                Defaults to the same directory as the PDF.
+            inline: If True, return full structure in the response instead
+                of writing to a file. Useful for small documents or internal
+                calls. Default: False.
 
         Returns:
-            Dict with success flag, hierarchical structure, flat boundaries,
-            detection metadata, and timing.
+            Dict with success flag, compact summary + file path (default),
+            or full hierarchical structure + flat boundaries (inline=True).
         """
         start_time = time.time()
 
@@ -214,20 +222,73 @@ class StructureDetectionMixin(MCPMixin):
             # Build hierarchical tree
             sections = self._boundaries_to_sections(flat_boundaries, total_pages)
 
+            detection_info = {
+                "strategies_used": strategies_used,
+                "bookmarks_found": bookmarks_found,
+                "body_font": body_font_info,
+                "heading_fonts": heading_font_info,
+                "total_pages": total_pages,
+            }
+
+            full_structure = {
+                "sections": sections,
+                "flat_boundaries": flat_boundaries,
+            }
+
+            elapsed = round(time.time() - start_time, 2)
+
+            # ── Inline mode: return everything in the response ──
+            if inline:
+                return {
+                    "success": True,
+                    "structure": full_structure,
+                    "detection_info": detection_info,
+                    "detection_time": elapsed,
+                }
+
+            # ── File-first mode (default): write JSON, return summary ──
+            if output_directory:
+                out_dir = Path(validate_output_path(output_directory))
+            else:
+                out_dir = path.parent
+
+            out_dir.mkdir(parents=True, exist_ok=True)
+            json_filename = f"{path.stem}_structure.json"
+            json_path = out_dir / json_filename
+
+            full_result = {
+                "structure": full_structure,
+                "detection_info": detection_info,
+                "detection_time": elapsed,
+            }
+            json_path.write_text(
+                json.dumps(full_result, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            # Build compact summary: top-level sections with subsection counts
+            summary_sections = []
+            for sec in sections:
+                sub_count = self._count_subsections(sec)
+                summary_sections.append({
+                    "title": sec["title"],
+                    "level": sec["level"],
+                    "pages": f"{sec['page_start']}-{sec['page_end']}",
+                    "confidence": sec["confidence"],
+                    "method": sec["detection_method"],
+                    "subsections": sub_count,
+                })
+
             return {
                 "success": True,
-                "structure": {
-                    "sections": sections,
-                    "flat_boundaries": flat_boundaries,
+                "output_file": str(json_path),
+                "summary": {
+                    "total_boundaries": len(flat_boundaries),
+                    "top_level_sections": len(sections),
+                    "sections": summary_sections,
                 },
-                "detection_info": {
-                    "strategies_used": strategies_used,
-                    "bookmarks_found": bookmarks_found,
-                    "body_font": body_font_info,
-                    "heading_fonts": heading_font_info,
-                    "total_pages": total_pages,
-                },
-                "detection_time": round(time.time() - start_time, 2),
+                "detection_info": detection_info,
+                "detection_time": elapsed,
             }
 
         except Exception as e:
@@ -645,6 +706,15 @@ class StructureDetectionMixin(MCPMixin):
                 )
                 section["page_end"] = max(section["page_end"], child_max)
 
+    @staticmethod
+    def _count_subsections(section: Dict[str, Any]) -> int:
+        """Recursively count all subsections (direct + nested)."""
+        subs = section.get("subsections", [])
+        total = len(subs)
+        for sub in subs:
+            total += StructureDetectionMixin._count_subsections(sub)
+        return total
+
     # ------------------------------------------------------------------
     # Filesystem-safe name helper (for downstream splitting tools)
     # ------------------------------------------------------------------
@@ -725,12 +795,13 @@ class StructureDetectionMixin(MCPMixin):
             output_dir = Path(validate_output_path(output_directory))
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Step 1: Detect structure
+            # Step 1: Detect structure (inline=True for internal use)
             structure_result = await self.detect_structure(
                 pdf_path=pdf_path,
                 strategies=strategies,
                 heading_pattern=heading_pattern,
                 min_confidence=min_confidence,
+                inline=True,
             )
 
             if not structure_result.get("success"):
