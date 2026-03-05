@@ -266,28 +266,29 @@ class StructureDetectionMixin(MCPMixin):
                 encoding="utf-8",
             )
 
-            # Build compact summary: top-level sections with subsection counts
-            summary_sections = []
-            for sec in sections:
+            # Build compact preview: "p1-30: Title (5 subs)" lines
+            max_preview = 10
+            preview_lines = []
+            for sec in sections[:max_preview]:
                 sub_count = self._count_subsections(sec)
-                summary_sections.append({
-                    "title": sec["title"],
-                    "level": sec["level"],
-                    "pages": f"{sec['page_start']}-{sec['page_end']}",
-                    "confidence": sec["confidence"],
-                    "method": sec["detection_method"],
-                    "subsections": sub_count,
-                })
+                sub_info = f" ({sub_count} sub)" if sub_count else ""
+                preview_lines.append(
+                    f"p{sec['page_start']}-{sec['page_end']}: "
+                    f"{sec['title'][:60]}{sub_info}"
+                )
+            if len(sections) > max_preview:
+                preview_lines.append(
+                    f"... and {len(sections) - max_preview} more sections"
+                )
 
             return {
                 "success": True,
                 "output_file": str(json_path),
-                "summary": {
-                    "total_boundaries": len(flat_boundaries),
-                    "top_level_sections": len(sections),
-                    "sections": summary_sections,
-                },
-                "detection_info": detection_info,
+                "total_boundaries": len(flat_boundaries),
+                "top_level_sections": len(sections),
+                "strategies_used": strategies_used,
+                "total_pages": total_pages,
+                "preview": preview_lines,
                 "detection_time": elapsed,
             }
 
