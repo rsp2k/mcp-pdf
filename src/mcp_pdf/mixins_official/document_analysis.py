@@ -225,27 +225,29 @@ class DocumentAnalysisMixin(MCPMixin):
 
             doc.close()
 
+            # Cap bookmark preview to avoid flooding MCP context
+            max_bookmark_preview = 20
+            bookmark_preview = [
+                b["indent"] for b in bookmarks[:max_bookmark_preview]
+            ]
+            if len(bookmarks) > max_bookmark_preview:
+                bookmark_preview.append(
+                    f"... and {len(bookmarks) - max_bookmark_preview} more bookmarks"
+                )
+
             return {
                 "success": True,
                 "structure_summary": {
                     "total_pages": total_pages,
                     "has_bookmarks": has_bookmarks,
                     "bookmark_count": len(bookmarks),
-                    "has_uniform_page_sizes": has_uniform_pages,
-                    "unique_page_sizes": len(unique_page_sizes),
-                    "has_forms": has_forms
-                },
-                "bookmarks": bookmarks,
-                "page_analysis": {
-                    "total_pages": total_pages,
-                    "unique_page_sizes": list(unique_page_sizes),
-                    "pages": page_analysis[:10]  # Limit to first 10 pages for context
-                },
-                "document_organization": {
-                    "bookmark_hierarchy_depth": max([b["level"] for b in bookmarks]) if bookmarks else 0,
+                    "bookmark_hierarchy_depth": max(b["level"] for b in bookmarks) if bookmarks else 0,
                     "estimated_sections": len([b for b in bookmarks if b["level"] <= 2]),
-                    "page_size_consistency": has_uniform_pages
+                    "has_uniform_page_sizes": has_uniform_pages,
+                    "unique_page_sizes": list(unique_page_sizes),
+                    "has_forms": has_forms,
                 },
+                "bookmark_preview": bookmark_preview,
                 "file_info": {
                     "path": str(path)
                 },
