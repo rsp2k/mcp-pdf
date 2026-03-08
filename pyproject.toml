@@ -1,6 +1,6 @@
 [project]
 name = "mcp-pdf"
-version = "2.1.4"
+version = "2.1.5"
 description = "Secure FastMCP server for comprehensive PDF processing - text extraction, OCR, table extraction, forms, annotations, and more"
 authors = [{name = "Ryan Malloy", email = "ryan@malloys.us"}]
 readme = "README.md"
@@ -36,8 +36,6 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "PyMuPDF>=1.23.0",
     "pdfplumber>=0.10.0",
-    "camelot-py[cv]>=0.11.0",  # includes opencv-python
-    "tabula-py>=2.8.0",
     "pytesseract>=0.3.10",
     "pdf2image>=1.16.0",
     "pypdf>=6.0.0",
@@ -64,9 +62,17 @@ forms = [
     "reportlab>=4.0.0",
 ]
 
+# Advanced table extraction (camelot needs Ghostscript, tabula needs Java)
+tables = [
+    "camelot-py[cv]>=0.11.0",
+    "tabula-py>=2.8.0",
+]
+
 # All optional features
 all = [
     "reportlab>=4.0.0",
+    "camelot-py[cv]>=0.11.0",
+    "tabula-py>=2.8.0",
 ]
 
 # Development dependencies

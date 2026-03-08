@@ -11,11 +11,12 @@ from typing import Dict, Any, Optional, List
 import logging
 import json
 
-# Table extraction libraries
+# Required
 import pandas as pd
-import camelot
-import tabula
 import pdfplumber
+
+# Optional — camelot and tabula are heavy deps with C/Java requirements.
+# They're imported lazily in their extraction methods.
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -69,8 +70,19 @@ class TableExtractionMixin(MCPMixin):
             parsed_pages = self._parse_pages_parameter(pages)
 
             if method == "auto":
-                # Try methods in order of reliability
-                methods_to_try = ["camelot", "pdfplumber", "tabula"]
+                # Try methods in order of reliability, skip unavailable ones
+                methods_to_try = []
+                try:
+                    import camelot  # noqa: F401
+                    methods_to_try.append("camelot")
+                except ImportError:
+                    pass
+                methods_to_try.append("pdfplumber")  # always available
+                try:
+                    import tabula  # noqa: F401
+                    methods_to_try.append("tabula")
+                except ImportError:
+                    pass
             else:
                 methods_to_try = [method]
 

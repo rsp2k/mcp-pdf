@@ -1032,10 +1032,9 @@ wheels = [
 
 [[package]]
 name = "mcp-pdf"
-version = "2.1.3"
+version = "2.1.4"
 source = { editable = "." }
 dependencies = [
-    { name = "camelot-py", extra = ["cv"] },
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "markdown" },
@@ -1048,12 +1047,13 @@ dependencies = [
     { name = "pypdf" },
     { name = "pytesseract" },
     { name = "python-dotenv" },
-    { name = "tabula-py" },
 ]
 
 [package.optional-dependencies]
 all = [
+    { name = "camelot-py", extra = ["cv"] },
     { name = "reportlab" },
+    { name = "tabula-py" },
 ]
 dev = [
     { name = "black" },
@@ -1068,6 +1068,10 @@ dev = [
 ]
 forms = [
     { name = "reportlab" },
+]
+tables = [
+    { name = "camelot-py", extra = ["cv"] },
+    { name = "tabula-py" },
 ]
 
 [package.dev-dependencies]
@@ -1085,7 +1089,8 @@ dev = [
 requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=0.10.0" },
-    { name = "camelot-py", extras = ["cv"], specifier = ">=0.11.0" },
+    { name = "camelot-py", extras = ["cv"], marker = "extra == 'all'", specifier = ">=0.11.0" },
+    { name = "camelot-py", extras = ["cv"], marker = "extra == 'tables'", specifier = ">=0.11.0" },
     { name = "fastmcp", specifier = ">=0.1.0" },
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "markdown", specifier = ">=3.5.0" },
@@ -1106,10 +1111,11 @@ requires-dist = [
     { name = "reportlab", marker = "extra == 'forms'", specifier = ">=4.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "safety", marker = "extra == 'dev'", specifier = ">=3.0.0" },
-    { name = "tabula-py", specifier = ">=2.8.0" },
+    { name = "tabula-py", marker = "extra == 'all'", specifier = ">=2.8.0" },
+    { name = "tabula-py", marker = "extra == 'tables'", specifier = ">=2.8.0" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=4.0.0" },
 ]
-provides-extras = ["forms", "all", "dev"]
+provides-extras = ["forms", "tables", "all", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

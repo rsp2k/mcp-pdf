@@ -23,8 +23,6 @@ import httpx
 # PDF processing libraries
 import fitz  # PyMuPDF
 import pdfplumber
-import camelot
-import tabula
 import pytesseract
 from pdf2image import convert_from_path
 import pypdf
@@ -714,8 +712,9 @@ async def extract_text(
 # Table extraction methods
 async def extract_tables_camelot(pdf_path: Path, pages: Optional[List[int]] = None) -> List[pd.DataFrame]:
     """Extract tables using Camelot"""
+    import camelot
     page_str = ','.join(map(str, [p+1 for p in pages])) if pages else 'all'
-    
+
     # Try lattice mode first (for bordered tables)
     try:
         tables = camelot.read_pdf(str(pdf_path), pages=page_str, flavor='lattice')
@@ -723,7 +722,7 @@ async def extract_tables_camelot(pdf_path: Path, pages: Optional[List[int]] = No
             return [table.df for table in tables]
     except Exception:
         pass
-    
+
     # Fall back to stream mode (for borderless tables)
     try:
         tables = camelot.read_pdf(str(pdf_path), pages=page_str, flavor='stream')
@@ -733,8 +732,9 @@ async def extract_tables_camelot(pdf_path: Path, pages: Optional[List[int]] = No
 
 async def extract_tables_tabula(pdf_path: Path, pages: Optional[List[int]] = None) -> List[pd.DataFrame]:
     """Extract tables using Tabula"""
+    import tabula
     page_list = [p+1 for p in pages] if pages else 'all'
-    
+
     try:
         tables = tabula.read_pdf(str(pdf_path), pages=page_list, multiple_tables=True)
         return tables

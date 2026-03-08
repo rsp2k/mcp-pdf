@@ -7,11 +7,11 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-# PDF processing libraries
-import camelot
-import tabula
+# Required
 import pdfplumber
 import pandas as pd
+
+# Optional — imported lazily in extraction methods
 
 from .base import MCPMixin, mcp_tool
 from ..security import validate_pdf_path, parse_pages_parameter, sanitize_error_message
@@ -144,6 +144,7 @@ class TableExtractionMixin(MCPMixin):
     # Private helper methods (all synchronous for proper async pattern)
     def _extract_tables_camelot(self, pdf_path: Path, pages: Optional[List[int]] = None) -> List[pd.DataFrame]:
         """Extract tables using Camelot"""
+        import camelot
         page_str = ','.join(map(str, [p+1 for p in pages])) if pages else 'all'
 
         # Try lattice mode first (for bordered tables)
@@ -163,6 +164,7 @@ class TableExtractionMixin(MCPMixin):
 
     def _extract_tables_tabula(self, pdf_path: Path, pages: Optional[List[int]] = None) -> List[pd.DataFrame]:
         """Extract tables using Tabula"""
+        import tabula
         page_list = [p+1 for p in pages] if pages else 'all'
 
         try:
