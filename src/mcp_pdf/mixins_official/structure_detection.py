@@ -826,9 +826,9 @@ class StructureDetectionMixin(MCPMixin):
                     "error": (
                         f"No boundaries found at level <= {split_level} with "
                         f"confidence >= {min_confidence}. Try lowering min_confidence "
-                        f"or increasing split_level."
+                        f"or increasing split_level. "
+                        f"({len(flat_boundaries)} total boundaries detected)"
                     ),
-                    "detected_structure": structure_result["structure"],
                     "split_time": round(time.time() - start_time, 2),
                 }
 
@@ -897,16 +897,10 @@ class StructureDetectionMixin(MCPMixin):
                     except OSError:
                         pass
 
-                sections_results.append({
-                    "title": title,
-                    "page_start": page_start,
-                    "page_end": page_end,
-                    "directory": str(section_dir),
-                    "pdf_path": str(section_pdf_path) if section_pdf_path else None,
-                    "markdown_path": str(md_path) if md_path else None,
-                    "images_extracted": images_extracted,
-                    "vectors_extracted": vectors_extracted,
-                })
+                sections_results.append(
+                    f"p{page_start}-{page_end}: {title[:60]} "
+                    f"({images_extracted} img, {vectors_extracted} vec)"
+                )
 
             source_doc.close()
 
@@ -915,7 +909,6 @@ class StructureDetectionMixin(MCPMixin):
                 "sections_created": len(sections_results),
                 "output_directory": str(output_dir),
                 "sections": sections_results,
-                "detected_structure": structure_result["structure"],
                 "split_time": round(time.time() - start_time, 2),
             }
 

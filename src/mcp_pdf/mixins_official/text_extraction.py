@@ -195,7 +195,11 @@ class TextExtractionMixin(MCPMixin):
 
     @mcp_tool(
         name="ocr_pdf",
-        description="Perform OCR on scanned PDFs with preprocessing options"
+        description=(
+            "Perform OCR on scanned PDFs. By default writes extracted text "
+            "to a .txt file and returns the path with a short preview. "
+            "Set inline=True to return full OCR text in the response."
+        )
     )
     async def ocr_pdf(
         self,
@@ -203,7 +207,9 @@ class TextExtractionMixin(MCPMixin):
         pages: Optional[str] = None,
         languages: List[str] = ["eng"],
         dpi: int = 300,
-        preprocess: bool = True
+        preprocess: bool = True,
+        output_directory: Optional[str] = None,
+        inline: bool = False,
     ) -> Dict[str, Any]:
         """
         Perform OCR on scanned PDF pages.
@@ -214,9 +220,14 @@ class TextExtractionMixin(MCPMixin):
             languages: List of language codes for OCR
             dpi: DPI for image rendering
             preprocess: Whether to preprocess images for better OCR
+            output_directory: Directory for the OCR text file.
+                Defaults to a temp directory.
+            inline: If True, return full OCR text in the response.
+                Default: False (write to file, return path + preview).
 
         Returns:
-            Dictionary containing OCR results
+            Dictionary containing OCR file path and summary, or full text
+            if inline=True
         """
         start_time = time.time()
 
@@ -294,25 +305,54 @@ class TextExtractionMixin(MCPMixin):
             # Calculate overall statistics
             successful_pages = [r for r in ocr_results if "error" not in r]
             avg_confidence = sum(r["confidence"] for r in successful_pages) / len(successful_pages) if successful_pages else 0
+            full_text = "\n\n".join(total_text)
+            word_count = len(full_text.split())
+            elapsed = round(time.time() - start_time, 2)
+
+            # ── Inline mode: return everything in the response ──
+            if inline:
+                return {
+                    "success": True,
+                    "text": full_text,
+                    "pages_processed": len(pages_to_process),
+                    "pages_successful": len(successful_pages),
+                    "overall_confidence": round(avg_confidence, 2),
+                    "page_results": ocr_results,
+                    "ocr_time": elapsed,
+                }
+
+            # ── File-first mode (default): write text, return summary ──
+            if output_directory:
+                out_dir = Path(validate_output_path(output_directory))
+            else:
+                out_dir = Path(tempfile.mkdtemp(prefix="pdf_ocr_"))
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            output_filename = f"{path.stem}_ocr.txt"
+            output_path = out_dir / output_filename
+            output_path.write_text(full_text, encoding="utf-8")
+
+            # Build preview (first ~500 chars at sentence boundary)
+            preview = full_text[:500]
+            if len(full_text) > 500:
+                last_period = preview.rfind(".")
+                if last_period > 300:
+                    preview = preview[:last_period + 1]
+                preview += " [...]"
 
             return {
                 "success": True,
-                "text": "\n\n".join(total_text),
-                "pages_processed": len(pages_to_process),
-                "pages_successful": len(successful_pages),
-                "pages_failed": len(pages_to_process) - len(successful_pages),
-                "overall_confidence": round(avg_confidence, 2),
-                "page_results": ocr_results,
-                "ocr_settings": {
-                    "languages": languages,
-                    "dpi": dpi,
-                    "preprocessing": preprocess
+                "output_file": str(output_path),
+                "text_preview": preview,
+                "ocr_summary": {
+                    "word_count": word_count,
+                    "character_count": len(full_text),
+                    "pages_processed": len(pages_to_process),
+                    "pages_successful": len(successful_pages),
+                    "pages_failed": len(pages_to_process) - len(successful_pages),
+                    "overall_confidence": round(avg_confidence, 2),
                 },
-                "file_info": {
-                    "path": str(path),
-                    "total_pages": total_pages
-                },
-                "ocr_time": round(time.time() - start_time, 2)
+                "ocr_time": elapsed,
             }
 
         except Exception as e:
