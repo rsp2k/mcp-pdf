@@ -402,7 +402,7 @@ class AnnotationsMixin(MCPMixin):
                         stamp_type.upper(),
                         fontsize=12,
                         color=(1, 1, 1),  # White text
-                        fontname="helv-bold"
+                        fontname="helv"
                     )
 
                     stamps_added += 1
@@ -470,6 +470,7 @@ class AnnotationsMixin(MCPMixin):
             # Validate path
             input_pdf_path = await validate_pdf_path(pdf_path)
             doc = fitz.open(str(input_pdf_path))
+            total_pages = len(doc)
 
             all_annotations = []
             annotation_stats = {
@@ -563,7 +564,7 @@ class AnnotationsMixin(MCPMixin):
                 "annotations": formatted_data,
                 "file_info": {
                     "path": str(input_pdf_path),
-                    "total_pages": len(doc) if 'doc' in locals() else 0
+                    "total_pages": total_pages if 'total_pages' in locals() else 0
                 },
                 "extraction_time": round(time.time() - start_time, 2)
             }

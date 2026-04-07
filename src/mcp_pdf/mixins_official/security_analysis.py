@@ -225,6 +225,7 @@ class SecurityAnalysisMixin(MCPMixin):
         try:
             path = await validate_pdf_path(pdf_path)
             doc = fitz.open(str(path))
+            total_pages = len(doc)
 
             watermark_analysis = []
             total_watermarks = 0
@@ -310,7 +311,7 @@ class SecurityAnalysisMixin(MCPMixin):
 
             # Watermark assessment
             has_watermarks = total_watermarks > 0
-            watermark_density = total_watermarks / len(doc) if len(doc) > 0 else 0
+            watermark_density = total_watermarks / total_pages if total_pages > 0 else 0
 
             # Determine watermark pattern
             if watermark_density > 0.8:
@@ -334,7 +335,7 @@ class SecurityAnalysisMixin(MCPMixin):
                 "page_analysis": watermark_analysis,
                 "watermark_insights": {
                     "pages_with_watermarks": len(watermark_analysis),
-                    "pages_without_watermarks": len(doc) - len(watermark_analysis),
+                    "pages_without_watermarks": total_pages - len(watermark_analysis),
                     "most_common_type": max(watermark_types, key=watermark_types.get) if any(watermark_types.values()) else "none"
                 },
                 "recommendations": [
@@ -344,7 +345,7 @@ class SecurityAnalysisMixin(MCPMixin):
                 ] if has_watermarks else ["No watermarks detected"],
                 "file_info": {
                     "path": str(path),
-                    "total_pages": len(doc)
+                    "total_pages": total_pages
                 },
                 "analysis_time": round(time.time() - start_time, 2)
             }

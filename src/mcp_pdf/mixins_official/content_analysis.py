@@ -51,9 +51,10 @@ class ContentAnalysisMixin(MCPMixin):
         try:
             path = await validate_pdf_path(pdf_path)
             doc = fitz.open(str(path))
+            total_pages = len(doc)
 
             # Extract text from sample pages for analysis
-            sample_size = min(10, len(doc))
+            sample_size = min(10, total_pages)
             full_text = ""
             total_words = 0
             total_sentences = 0
@@ -132,8 +133,8 @@ class ContentAnalysisMixin(MCPMixin):
             total_links = sum(len(doc[i].get_links()) for i in range(sample_size))
 
             # Estimate for full document
-            estimated_total_images = int(total_images * len(doc) / sample_size) if sample_size > 0 else 0
-            estimated_total_links = int(total_links * len(doc) / sample_size) if sample_size > 0 else 0
+            estimated_total_images = int(total_images * total_pages / sample_size) if sample_size > 0 else 0
+            estimated_total_links = int(total_links * total_pages / sample_size) if sample_size > 0 else 0
 
             doc.close()
 
@@ -145,8 +146,8 @@ class ContentAnalysisMixin(MCPMixin):
                     "secondary_types": sorted(content_scores.items(), key=lambda x: x[1], reverse=True)[1:4]
                 },
                 "content_analysis": {
-                    "total_pages": len(doc),
-                    "estimated_word_count": int(total_words * len(doc) / sample_size),
+                    "total_pages": total_pages,
+                    "estimated_word_count": int(total_words * total_pages / sample_size),
                     "avg_words_per_page": round(avg_words_per_page, 1),
                     "vocabulary_diversity": round(vocabulary_diversity, 2),
                     "reading_level": reading_level,
@@ -211,15 +212,16 @@ class ContentAnalysisMixin(MCPMixin):
         try:
             path = await validate_pdf_path(pdf_path)
             doc = fitz.open(str(path))
+            total_pages = len(doc)
 
             # Parse pages parameter
             parsed_pages = parse_pages_parameter(pages)
-            page_numbers = parsed_pages if parsed_pages else list(range(len(doc)))
-            page_numbers = [p for p in page_numbers if 0 <= p < len(doc)]
+            page_numbers = parsed_pages if parsed_pages else list(range(total_pages))
+            page_numbers = [p for p in page_numbers if 0 <= p < total_pages]
 
             # If parsing failed but pages was specified, use all pages
             if pages and not page_numbers:
-                page_numbers = list(range(len(doc)))
+                page_numbers = list(range(total_pages))
 
             # Extract text from specified pages
             full_text = ""
@@ -313,7 +315,7 @@ class ContentAnalysisMixin(MCPMixin):
                 },
                 "file_info": {
                     "path": str(path),
-                    "total_pages": len(doc),
+                    "total_pages": total_pages,
                     "pages_processed": pages or "all"
                 },
                 "analysis_time": round(time.time() - start_time, 2)
@@ -354,17 +356,18 @@ class ContentAnalysisMixin(MCPMixin):
         try:
             path = await validate_pdf_path(pdf_path)
             doc = fitz.open(str(path))
+            total_pages = len(doc)
 
             # Parse pages parameter
             parsed_pages = parse_pages_parameter(pages)
             if parsed_pages:
-                page_numbers = [p for p in parsed_pages if 0 <= p < len(doc)]
+                page_numbers = [p for p in parsed_pages if 0 <= p < total_pages]
             else:
-                page_numbers = list(range(min(5, len(doc))))  # Limit to 5 pages for performance
+                page_numbers = list(range(min(5, total_pages)))  # Limit to 5 pages for performance
 
             # If parsing failed but pages was specified, default to first 5
             if pages and not page_numbers:
-                page_numbers = list(range(min(5, len(doc))))
+                page_numbers = list(range(min(5, total_pages)))
 
             layout_analysis = []
 
@@ -513,7 +516,7 @@ class ContentAnalysisMixin(MCPMixin):
                 },
                 "file_info": {
                     "path": str(path),
-                    "total_pages": len(doc)
+                    "total_pages": total_pages
                 },
                 "analysis_time": round(time.time() - start_time, 2)
             }

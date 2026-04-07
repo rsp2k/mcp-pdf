@@ -62,15 +62,16 @@ class MiscToolsMixin(MCPMixin):
         try:
             path = await validate_pdf_path(pdf_path)
             doc = fitz.open(str(path))
+            total_pages = len(doc)
 
             # Parse pages parameter
             parsed_pages = parse_pages_parameter(pages)
-            page_numbers = parsed_pages if parsed_pages else list(range(len(doc)))
-            page_numbers = [p for p in page_numbers if 0 <= p < len(doc)]
+            page_numbers = parsed_pages if parsed_pages else list(range(total_pages))
+            page_numbers = [p for p in page_numbers if 0 <= p < total_pages]
 
             # If parsing failed but pages was specified, use all pages
             if pages and not page_numbers:
-                page_numbers = list(range(len(doc)))
+                page_numbers = list(range(total_pages))
 
             all_links = []
             link_types = {"internal": 0, "external": 0, "email": 0, "other": 0}
@@ -169,7 +170,7 @@ class MiscToolsMixin(MCPMixin):
                 },
                 "file_info": {
                     "path": str(path),
-                    "total_pages": len(doc),
+                    "total_pages": total_pages,
                     "pages_processed": pages or "all"
                 },
                 "extraction_time": round(time.time() - start_time, 2)
@@ -210,15 +211,16 @@ class MiscToolsMixin(MCPMixin):
         try:
             path = await validate_pdf_path(pdf_path)
             doc = fitz.open(str(path))
+            total_pages = len(doc)
 
             # Parse pages parameter
             parsed_pages = parse_pages_parameter(pages)
-            page_numbers = parsed_pages if parsed_pages else list(range(len(doc)))
-            page_numbers = [p for p in page_numbers if 0 <= p < len(doc)]
+            page_numbers = parsed_pages if parsed_pages else list(range(total_pages))
+            page_numbers = [p for p in page_numbers if 0 <= p < total_pages]
 
             # If parsing failed but pages was specified, use all pages
             if pages and not page_numbers:
-                page_numbers = list(range(len(doc)))
+                page_numbers = list(range(total_pages))
 
             visual_elements = []
             charts_found = 0
@@ -326,7 +328,7 @@ class MiscToolsMixin(MCPMixin):
                 },
                 "file_info": {
                     "path": str(path),
-                    "total_pages": len(doc)
+                    "total_pages": total_pages
                 },
                 "analysis_time": round(time.time() - start_time, 2)
             }
