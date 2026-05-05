@@ -61,8 +61,10 @@ uv sync
 # System dependencies (Ubuntu/Debian)
 sudo apt-get install tesseract-ocr tesseract-ocr-eng poppler-utils ghostscript
 
-# For markdown_to_pdf:
-sudo apt-get install pandoc texlive-xetex   # or: weasyprint, wkhtmltopdf
+# For markdown_to_pdf — pick one PDF-engine route:
+sudo apt-get install pandoc tectonic                                          # recommended (small)
+# or:  sudo apt-get install pandoc texlive-xetex texlive-latex-extra          # full TeX
+# or:  sudo apt-get install pandoc && pip install weasyprint                  # skip TeX
 
 # Verify
 uv run python examples/verify_installation.py
@@ -210,34 +212,74 @@ Some features require system packages:
 | Camelot tables | `ghostscript` |
 | Tabula tables | `default-jre-headless` |
 | PDF to images | `poppler-utils` |
-| `markdown_to_pdf` | `pandoc` + one of: `texlive-xetex`, `texlive-latex-base`, `tectonic`, `weasyprint`, `wkhtmltopdf` |
+| `markdown_to_pdf` | `pandoc` + one of: `tectonic`, `texlive-xetex` (+ `texlive-latex-extra`), `weasyprint`, `wkhtmltopdf` |
+
+### Picking a PDF engine for `markdown_to_pdf`
+
+Pandoc takes markdown → HTML or LaTeX → PDF. The LaTeX path produces the most polished output but needs a TeX install. Trade-offs:
+
+| Engine | Disk size | Notes |
+|--------|----------|-------|
+| **`tectonic`** | ~30 MB | **Recommended for new installs.** Single static binary. Downloads LaTeX packages on demand — no upfront mass-install. |
+| `xelatex` + `texlive-latex-extra` | ~500 MB | Best output once installed. Use if you already run TeX. The `-extra` package matters: pandoc's default template needs `lastpage`, `xcolor`, `framed`, `fancyhdr`, etc. — all of which live there, **not** in `texlive-xetex`. |
+| `xelatex` alone (just `texlive-xetex`) | ~200 MB | **Often breaks.** Expect `! LaTeX Error: File 'X.sty' not found` on real docs. |
+| `weasyprint` | ~40 MB | Pure-Python (`pip install weasyprint`) + cairo/pango system libs. HTML/CSS path — no LaTeX. Good for simple docs; weaker on math, footnotes, citations. |
+| `wkhtmltopdf` | ~40 MB | Older HTML-to-PDF tool. Adequate but less actively maintained. |
 
 **Ubuntu/Debian:**
 ```bash
 sudo apt-get install tesseract-ocr tesseract-ocr-eng poppler-utils ghostscript default-jre-headless
 
-# For markdown_to_pdf — pandoc plus at least one PDF engine
-sudo apt-get install pandoc texlive-xetex
+# For markdown_to_pdf — pick one engine route:
+
+# Option A — tectonic (smallest, downloads packages on demand)
+sudo apt-get install pandoc
+# tectonic isn't in apt — install via cargo or download static binary:
+#   https://tectonic-typesetting.github.io/en-US/install.html
+
+# Option B — full TeX (best quality, large download)
+sudo apt-get install pandoc texlive-xetex texlive-latex-extra texlive-fonts-extra
+
+# Option C — weasyprint (skip TeX entirely)
+sudo apt-get install pandoc
+pip install weasyprint
 ```
 
 **Arch Linux:**
 ```bash
 sudo pacman -S tesseract tesseract-data-eng poppler ghostscript jre-openjdk-headless
 
-# For markdown_to_pdf — pandoc plus at least one PDF engine
-sudo pacman -S pandoc texlive-xetex
-# Lighter alternatives (pick one): tectonic, wkhtmltopdf (AUR), or pip install weasyprint
+# For markdown_to_pdf — pick one engine route:
+
+# Option A — tectonic (recommended for new installs, in official repo)
+sudo pacman -S pandoc tectonic
+
+# Option B — full TeX (best output, ~500 MB)
+sudo pacman -S pandoc texlive-xetex texlive-latexextra texlive-fontsextra
+
+# Option C — weasyprint (skip TeX)
+sudo pacman -S pandoc
+pip install weasyprint   # or: uv pip install weasyprint
+
+# Option D — wkhtmltopdf (from AUR)
+yay -S wkhtmltopdf-static
 ```
 
 **macOS (Homebrew):**
 ```bash
 brew install tesseract poppler ghostscript
 
-# For markdown_to_pdf
+# For markdown_to_pdf — pick one engine route:
+
+# Option A — tectonic (recommended)
+brew install pandoc tectonic
+
+# Option B — full TeX (mactex-no-gui includes the latex-extra equivalent)
 brew install pandoc
-brew install --cask mactex-no-gui   # for xelatex/pdflatex
-# Or a lighter engine:
-brew install weasyprint
+brew install --cask mactex-no-gui
+
+# Option C — weasyprint
+brew install pandoc weasyprint
 ```
 
 ## Optional Extras

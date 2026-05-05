@@ -65,6 +65,8 @@ docker compose run --rm mcp-pdf python examples/verify_installation.py
 | `pandoc` | `markdown_to_pdf` |
 | `xelatex` / `pdflatex` / `tectonic` / `weasyprint` / `wkhtmltopdf` | `markdown_to_pdf` (need at least one) |
 
+> **Note on the LaTeX engine:** `texlive-xetex` alone is often not enough for real markdown docs — pandoc's default template needs LaTeX packages (`lastpage`, `xcolor`, `framed`, `fancyhdr`, etc.) that live in `texlive-latex-extra` (Debian) / `texlive-latexextra` (Arch). If you don't already use TeX, **`tectonic` is a much better choice** — it's a ~30 MB static binary that downloads packages on demand. See the README's "Picking a PDF engine" table for details.
+
 ### Ubuntu/Debian
 ```bash
 sudo apt-get update
@@ -73,8 +75,10 @@ sudo apt-get install -y \
     poppler-utils ghostscript \
     python3-tk default-jre-headless
 
-# For markdown_to_pdf
-sudo apt-get install -y pandoc texlive-xetex
+# For markdown_to_pdf, pick one of:
+sudo apt-get install -y pandoc                              # then install tectonic separately
+sudo apt-get install -y pandoc texlive-xetex texlive-latex-extra texlive-fonts-extra   # full TeX
+sudo apt-get install -y pandoc && pip install weasyprint    # skip TeX
 ```
 
 ### Arch Linux
@@ -84,21 +88,20 @@ sudo pacman -S \
     poppler ghostscript \
     jre-openjdk-headless tk
 
-# For markdown_to_pdf
-sudo pacman -S pandoc texlive-xetex
-# Lighter alternative engines: tectonic (official repo),
-# wkhtmltopdf (AUR), or `pip install weasyprint` (works in any venv)
+# For markdown_to_pdf, pick one of:
+sudo pacman -S pandoc tectonic                                                 # recommended
+sudo pacman -S pandoc texlive-xetex texlive-latexextra texlive-fontsextra      # full TeX
+sudo pacman -S pandoc && pip install weasyprint                                # skip TeX
 ```
 
 ### macOS (Homebrew)
 ```bash
 brew install tesseract poppler ghostscript
 
-# For markdown_to_pdf
-brew install pandoc
-brew install --cask mactex-no-gui   # full TeX with xelatex/pdflatex
-# Or lighter:
-brew install weasyprint
+# For markdown_to_pdf, pick one of:
+brew install pandoc tectonic                          # recommended
+brew install pandoc && brew install --cask mactex-no-gui   # full TeX
+brew install pandoc weasyprint                        # skip TeX
 ```
 
 ### Windows
