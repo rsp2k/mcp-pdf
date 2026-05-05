@@ -1,201 +1,161 @@
-# 🔧 Local Development Guide for MCP PDF
+# Local Development Guide
 
-This guide shows how to test MCP PDF locally during development before publishing to PyPI.
+This guide is for working **on** mcp-pdf — testing changes against a local Claude Code session before publishing to PyPI. End-user install instructions live in [README.md](README.md) and [QUICKSTART.md](QUICKSTART.md).
 
-## 📋 Prerequisites
+## Prerequisites
 
 - Python 3.10+
-- uv package manager
-- Claude Desktop app
-- Git repository cloned locally
+- [uv](https://docs.astral.sh/uv/) package manager
+- Claude Code CLI (or Claude Desktop app)
+- Git
 
-## 🚀 Quick Start for Local Testing
+System binaries needed at runtime are listed in [README.md → System Dependencies](README.md#system-dependencies). For development you can skip the ones you're not actively touching (e.g. skip `pandoc` if you're not changing `markdown_to_pdf`).
 
-### 1. Clone and Setup
+## Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/rsp2k/mcp-pdf.git
 cd mcp-pdf
 
-# Install dependencies
-uv sync --dev
+# Install dev deps + all optional extras so every tool is exercised
+uv sync --all-extras --dev
 
-# Verify installation
-uv run python -c "from mcp_pdf.server import create_server; print('✅ MCP PDF loads successfully')"
+# Smoke test — does the package even import?
+uv run python -c "from mcp_pdf.server import create_server; print('ok')"
 ```
 
-### 2. Add MCP Server to Claude Desktop
+## Wiring up a local checkout to Claude Code
 
-#### For Production Use (PyPI Installation)
+Three useful patterns, in order of how often you'll want each:
 
-Install the published version from PyPI:
+### Pattern 1 — Local source, hot-reload edits
+
+Best when iterating on tool code. `uv run` resolves to the local checkout, so saves are picked up next time the MCP server restarts.
 
 ```bash
-# For personal use across all projects
-claude mcp add -s local pdf-tools uvx mcp-pdf
+# From inside the mcp-pdf checkout
+claude mcp add -s project pdf-tools-dev -- uv --directory . run mcp-pdf
 
-# For project-specific use (isolated to current directory)
-claude mcp add -s project pdf-tools uvx mcp-pdf
+# Or from anywhere, with an absolute path
+claude mcp add -s project pdf-tools-dev -- uv --directory /path/to/mcp-pdf run mcp-pdf
 ```
 
-#### For Local Development (Source Installation)
+The `--` separator is required so the Claude CLI doesn't try to parse `--directory` as one of its own flags.
 
-When developing MCP PDF itself, use the local source:
+### Pattern 2 — Specific PyPI version (regression testing)
+
+Useful for confirming that a regression report on a published version actually reproduces.
 
 ```bash
-# For development from local source
-claude mcp add -s project pdf-tools-dev uv -- --directory /path/to/mcp-pdf-tools run mcp-pdf
+claude mcp add -s project pdf-tools-pinned -- uvx --from "mcp-pdf==2.2.0" mcp-pdf
 ```
 
-Or if you're in the mcp-pdf directory:
+### Pattern 3 — Latest from PyPI (post-publish smoke test)
+
+After running `uv publish`, verify the new version actually works in Claude before announcing it:
 
 ```bash
-# Development server from current directory
-claude mcp add -s project pdf-tools-dev uv -- --directory . run mcp-pdf
+claude mcp add -s project pdf-tools-released -- uvx --refresh --from "mcp-pdf[markdown]" mcp-pdf
 ```
 
-### 3. Alternative: Manual Server Testing
+`--refresh` forces uvx to bypass its cache, otherwise it'll keep using the previous release.
 
-You can also run the server manually for debugging:
+## Running the server outside Claude (for debugging)
+
+Sometimes the MCP transport hides the real failure. Run the server directly:
 
 ```bash
-# Run the MCP server directly
 uv run mcp-pdf
-
-# Or run with specific FastMCP options
+# Or, equivalently:
 uv run python -m mcp_pdf.server
 ```
 
-### 4. Test Core Functionality
+Then use a test harness like the FastMCP in-process client, or hit the stdio transport directly with JSON-RPC messages. The server logs go to stderr.
 
-Once connected to Claude Code, test these key features:
+## Tests
 
-#### Basic PDF Processing
-```
-"Extract text from this PDF file: /path/to/test.pdf"
-"Get metadata from this PDF: /path/to/document.pdf"
-"Check if this PDF is scanned: /path/to/scan.pdf"
-```
-
-#### Security Features
-```
-"Try to extract text from a very large PDF"
-"Process a PDF with 2000 pages" (should be limited to 1000)
-```
-
-#### Advanced Features
-```
-"Extract tables from this PDF: /path/to/tables.pdf"
-"Convert this PDF to markdown: /path/to/document.pdf"
-"Add annotations to this PDF: /path/to/target.pdf"
-```
-
-## 🔒 Security Testing
-
-Verify the security hardening works:
-
-### File Size Limits
-- Try processing a PDF larger than 100MB
-- Should see: "PDF file too large: X bytes > 104857600"
-
-### Page Count Limits  
-- Try processing a PDF with >1000 pages
-- Should see: "PDF too large for processing: X pages > 1000"
-
-### Path Traversal Protection
-- Test with malicious paths like `../../../etc/passwd`
-- Should be blocked with security error
-
-### JSON Input Validation
-- Large JSON inputs (>10KB) should be rejected
-- Malformed JSON should return clean error messages
-
-## 🐛 Debugging
-
-### Enable Debug Logging
 ```bash
-export DEBUG=true
-uv run mcp-pdf
-```
+# Full suite
+uv run pytest
 
-### Check Security Functions
-```bash
-# Test security validation functions
+# A single area
+uv run pytest tests/test_server.py
+
+# With coverage
+uv run pytest --cov=mcp_pdf
+
+# Security-focused tests live at the repo root (not under tests/)
 uv run python test_security_features.py
-
-# Run integration tests
 uv run python test_integration.py
 ```
 
-### Verify Package Structure
+## Manual verification before a release
+
+A short list to walk through against a real PDF before publishing. Update version in `pyproject.toml` first.
+
+- [ ] `extract_text` on a small PDF returns text
+- [ ] `extract_text` on a 1000+ page PDF chunks correctly (no MCP "response too large" errors)
+- [ ] `extract_tables` finds tables in a financial-report-style PDF
+- [ ] `pdf_to_markdown` writes to disk by default and the inline escape hatch (`inline=True`) returns full markdown
+- [ ] `markdown_to_pdf` converts a real `.md` → PDF via the auto-detected engine (run with `pdf_engine=None` and check the `engine_used` field in the response)
+- [ ] `extract_form_data` + `fill_form_pdf` round-trip on an interactive form
+- [ ] `add_sticky_notes`, `add_highlights`, `add_stamps` all produce viewable annotations in Acrobat
+- [ ] Path traversal blocked: passing `../../etc/passwd` returns a sanitized error
+- [ ] Page count limit blocked: a >1000-page PDF returns a sanitized error
+- [ ] Error messages don't leak `/home/$USER/` paths (the `sanitize_error_message` helper handles this)
+
+## Publishing pipeline
+
 ```bash
-# Check package builds correctly
+# 1. Bump version in pyproject.toml (date-based or semver — see global rules)
+
+# 2. Sync uv.lock — easy to forget; the lockfile and pyproject.toml versions
+#    must agree or the published wheel and sdist disagree
+uv lock
+
+# 3. Clean dist/ — uv publish uploads everything in dist/, so stale files
+#    from previous releases cause duplicate-upload errors
+rm -rf dist/
+
+# 4. Build
 uv build
 
-# Verify package metadata
+# 5. Pre-publish PII audit — see ~/.claude/rules/python.md for the
+#    full grep recipe. The unpacked-sdist check is non-negotiable.
+mkdir -p /tmp/sdist-audit && tar -xzf dist/*.tar.gz -C /tmp/sdist-audit
+grep -rnEi 'real-domain|10\.[0-9]+\.|192\.168\.|/home/' /tmp/sdist-audit/
+
+# 6. Validate metadata
 uv run twine check dist/*
+
+# 7. Upload (uv publish doesn't read ~/.pypirc — twine does)
+uv run twine upload dist/*
+
+# 8. Verify the version is live
+curl -s -o /dev/null -w "HTTP %{http_code}\n" \
+    https://pypi.org/project/mcp-pdf/$(grep ^version pyproject.toml | cut -d'"' -f2)/
 ```
 
-## 📊 Testing Checklist
-
-Before publishing, verify:
-
-- [ ] All 23 PDF tools work correctly
-- [ ] Security limits are enforced (file size, page count)
-- [ ] Error messages are clean and helpful  
-- [ ] No sensitive information leaked in errors
-- [ ] Path traversal protection works
-- [ ] JSON input validation works
-- [ ] Memory limits prevent crashes
-- [ ] CLI command `mcp-pdf` works
-- [ ] Package imports correctly: `from mcp_pdf.server import create_server`
-
-## 🚀 Publishing Pipeline
-
-Once local testing passes:
-
-1. **Version Bump**: Update version in `pyproject.toml`
-2. **Build**: `uv build`  
-3. **Test Upload**: `uv run twine upload --repository testpypi dist/*`
-4. **Test Install**: `pip install -i https://test.pypi.org/simple/ mcp-pdf`
-5. **Production Upload**: `uv run twine upload dist/*`
-
-## 🔧 Development Commands
+Once published, push tags + commits to both remotes:
 
 ```bash
-# Format code
-uv run black src/ tests/
-
-# Lint code  
-uv run ruff check src/ tests/
-
-# Run tests
-uv run pytest
-
-# Security scan
-uv run pip-audit
-
-# Build package
-uv build
-
-# Install editable for development
-pip install -e .  # (in a venv)
+git push new-origin main
+git push origin main   # gitea mirror
 ```
 
-## 🆘 Troubleshooting
+## Common gotchas
 
-### "Module not found" errors
-- Ensure you're in the right directory
-- Run `uv sync` to install dependencies
-- Check Python path with `uv run python -c "import sys; print(sys.path)"`
+### "Module not found" after a `git pull`
+Run `uv sync --all-extras` again — new optional dependencies don't auto-install.
 
-### MCP server won't start
-- Check that all system dependencies are installed (tesseract, java, ghostscript)
-- Verify with: `uv run python examples/verify_installation.py`
+### MCP server connects but tools don't appear
+The Claude Code session caches the tool list at MCP-server-connect time. After adding a new tool, run `/mcp` and reconnect.
 
-### Security tests fail
-- Run `uv run python test_security_features.py -v` for detailed output
-- Check that security constants are properly set
+### `markdown_to_pdf` errors with `mktexfmt: Did not find entry for byfmt=xelatex`
+The host's TeX install is missing format files. Either run `sudo fmtutil-sys --all` to regenerate them, or sidestep by passing `pdf_engine="weasyprint"` (after `pip install weasyprint`) or `pdf_engine="tectonic"`.
 
-This setup allows for rapid development and testing without polluting your system Python or needing to publish to PyPI for every change.
+### Tests fail with `'FunctionTool' object is not callable`
+Tests under `tests/test_server.py` call the `@mcp_tool`-decorated methods directly, but `@mcp_tool` wraps them. Call the methods via the mixin instance instead — see `tests/test_mixin_architecture.py` for the working pattern.
+
+### `uv publish` succeeds but PyPI shows old version
+PyPI's package-level JSON cache (`/pypi/<pkg>/json`) lags by a minute or two. The version-specific URL (`/pypi/<pkg>/<ver>/`) updates immediately — use that for verification.
