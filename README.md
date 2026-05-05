@@ -6,7 +6,7 @@
 
 **A FastMCP server for PDF processing**
 
-*46 tools for text extraction, OCR, tables, forms, annotations, and more*
+*47 tools for text extraction, OCR, tables, forms, annotations, markdown↔PDF, and more*
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square)](https://www.python.org/downloads/)
 [![FastMCP](https://img.shields.io/badge/FastMCP-2.0+-green.svg?style=flat-square)](https://github.com/jlowin/fastmcp)
@@ -31,18 +31,24 @@ MCP PDF extracts content from PDFs using multiple libraries with automatic fallb
 - **Document assembly** - merge, split, reorder pages
 - **Annotations** - sticky notes, highlights, stamps
 - **Vector graphics** - extract to SVG for schematics and technical drawings
+- **Format conversion** - PDF ↔ Markdown (PDF→MD via PyMuPDF, MD→PDF via pandoc)
 
 ---
 
 ## Quick Start
 
 ```bash
-# Install from PyPI
+# Run from PyPI (one-shot, no permanent install)
 uvx mcp-pdf
 
-# Or add to Claude Code
-claude mcp add pdf-tools uvx mcp-pdf
+# Add to Claude Code — note the `--` separator before uvx
+claude mcp add pdf-tools -- uvx mcp-pdf
+
+# Include the markdown_to_pdf tool (requires pandoc on host)
+claude mcp add pdf-tools -- uvx --from "mcp-pdf[markdown]" mcp-pdf
 ```
+
+> `uvx` caches tool installs aggressively. After upgrading to a new release, force a refresh with `uvx --refresh mcp-pdf` (or `uvx --refresh --from "mcp-pdf[markdown]" mcp-pdf` if you're using extras).
 
 <details>
 <summary><b>Development Installation</b></summary>
@@ -54,6 +60,9 @@ uv sync
 
 # System dependencies (Ubuntu/Debian)
 sudo apt-get install tesseract-ocr tesseract-ocr-eng poppler-utils ghostscript
+
+# For markdown_to_pdf:
+sudo apt-get install pandoc texlive-xetex   # or: weasyprint, wkhtmltopdf
 
 # Verify
 uv run python examples/verify_installation.py
@@ -73,9 +82,17 @@ uv run python examples/verify_installation.py
 | `extract_tables` | Extract tables to JSON, CSV, or Markdown |
 | `extract_images` | Extract embedded images |
 | `extract_links` | Get all hyperlinks with page filtering |
-| `pdf_to_markdown` | Convert PDF to markdown preserving structure |
 | `ocr_pdf` | OCR scanned documents using Tesseract |
 | `extract_vector_graphics` | Export vector graphics to SVG (schematics, charts, drawings) |
+
+### Format Conversion
+
+| Tool | What it does |
+|------|-------------|
+| `pdf_to_markdown` | Convert PDF to markdown preserving structure; extracts images and SVG vectors to disk |
+| `markdown_to_pdf` | Convert `.md` files (or inline text) to PDF via pandoc with auto-detected engine |
+
+**`markdown_to_pdf` requires:** `pip install mcp-pdf[markdown]` plus the pandoc binary and at least one PDF engine (`xelatex`, `pdflatex`, `tectonic`, `weasyprint`, or `wkhtmltopdf`) on PATH. The tool auto-detects what's available and uses the highest-quality one. Pass `pdf_engine=` to override or `extra_args=` for raw pandoc options.
 
 ### Document Analysis
 
@@ -193,11 +210,46 @@ Some features require system packages:
 | Camelot tables | `ghostscript` |
 | Tabula tables | `default-jre-headless` |
 | PDF to images | `poppler-utils` |
+| `markdown_to_pdf` | `pandoc` + one of: `texlive-xetex`, `texlive-latex-base`, `tectonic`, `weasyprint`, `wkhtmltopdf` |
 
-Ubuntu/Debian:
+**Ubuntu/Debian:**
 ```bash
 sudo apt-get install tesseract-ocr tesseract-ocr-eng poppler-utils ghostscript default-jre-headless
+
+# For markdown_to_pdf — pandoc plus at least one PDF engine
+sudo apt-get install pandoc texlive-xetex
 ```
+
+**Arch Linux:**
+```bash
+sudo pacman -S tesseract tesseract-data-eng poppler ghostscript jre-openjdk-headless
+
+# For markdown_to_pdf — pandoc plus at least one PDF engine
+sudo pacman -S pandoc texlive-xetex
+# Lighter alternatives (pick one): tectonic, wkhtmltopdf (AUR), or pip install weasyprint
+```
+
+**macOS (Homebrew):**
+```bash
+brew install tesseract poppler ghostscript
+
+# For markdown_to_pdf
+brew install pandoc
+brew install --cask mactex-no-gui   # for xelatex/pdflatex
+# Or a lighter engine:
+brew install weasyprint
+```
+
+## Optional Extras
+
+The base install stays lean. Heavy or niche dependencies are gated behind extras:
+
+| Extra | Adds | When to install |
+|-------|------|----------------|
+| `mcp-pdf[forms]` | `reportlab` | Form creation tools (`create_form_pdf`, permit forms) |
+| `mcp-pdf[tables]` | `camelot-py`, `tabula-py` | Higher-accuracy table extraction (also needs Java + Ghostscript) |
+| `mcp-pdf[markdown]` | `pypandoc` | `markdown_to_pdf` tool (also needs pandoc binary) |
+| `mcp-pdf[all]` | All of the above | Want everything |
 
 ---
 
