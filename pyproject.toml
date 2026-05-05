@@ -99,6 +99,32 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Keep dev-only artifacts out of the sdist that ships to PyPI.
+# (The PII audit also runs against the unpacked sdist before each publish —
+# see ~/.claude/rules/python.md.)
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "CLAUDE.md",          # operator-private project context
+  ".env", ".env.local", # never ship credentials
+  ".mcp.json",          # contains local filesystem paths
+  ".pytest_cache/",
+  ".ruff_cache/",
+  "build/",
+  "dist/",
+  "examples/page_001.png",
+  "examples/*.pdf",     # demo PDFs are large + not needed by end users
+  "examples/test_demo.*",
+  "tests/CopperSprings_DigitalPortfolio.pdf",  # large fixture PDF
+  "test_security_features.py",
+  "test_integration.py",
+  "MCPMIXIN_*.md",      # internal architecture/migration notes
+  "MCP_DOCX_TOOLS_PLAN.md",
+  "claude-mcp-manager", # personal helper script
+  "run-mcp-server.sh",
+  "docker-compose.yml",
+  "Dockerfile",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"

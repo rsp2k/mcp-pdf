@@ -1,9 +1,11 @@
 {
   "mcpServers": {
     "pdf-tools": {
-      "command": "uv",
-      "args": ["run", "--directory", "/home/rpm/claude/mcp-pdf-tools", "mcp-pdf-tools"],
-      "env": {}
+      "command": "uvx",
+      "args": ["--from", "mcp-pdf[markdown]", "mcp-pdf"],
+      "env": {
+        "PDF_TEMP_DIR": "/tmp/mcp-pdf-processing"
+      }
     }
   }
 }
