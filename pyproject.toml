@@ -1,6 +1,6 @@
 [project]
 name = "mcp-pdf"
-version = "2.1.7"
+version = "2.2.0"
 description = "Secure FastMCP server for comprehensive PDF processing - text extraction, OCR, table extraction, forms, annotations, and more"
 authors = [{name = "Ryan Malloy", email = "ryan@malloys.us"}]
 readme = "README.md"
@@ -68,11 +68,18 @@ tables = [
     "tabula-py>=2.8.0",
 ]
 
+# Markdown → PDF conversion (requires pandoc binary + a PDF engine such as
+# xelatex, pdflatex, tectonic, weasyprint, or wkhtmltopdf)
+markdown = [
+    "pypandoc>=1.13",
+]
+
 # All optional features
 all = [
     "reportlab>=4.0.0",
     "camelot-py[cv]>=0.11.0",
     "tabula-py>=2.8.0",
+    "pypandoc>=1.13",
 ]
 
 # Development dependencies

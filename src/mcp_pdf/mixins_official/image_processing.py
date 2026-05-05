@@ -991,3 +991,205 @@ class ImageProcessingMixin(MCPMixin):
         simplified = re.sub(r'-?\d+\.\d{3,}', reduce_precision, svg_content)
 
         return simplified
+
+    @mcp_tool(
+        name="markdown_to_pdf",
+        description=(
+            "Convert a Markdown file (or inline text) to PDF using pandoc. "
+            "Auto-detects available PDF engines (xelatex, pdflatex, tectonic, "
+            "weasyprint, wkhtmltopdf) and falls back through them in that order. "
+            "Pass pdf_engine to override, or extra_args for custom pandoc options "
+            "(e.g. ['-V', 'geometry:margin=1in']). Requires pandoc binary on host "
+            "and at least one PDF engine. Install with: pip install mcp-pdf[markdown]"
+        )
+    )
+    async def markdown_to_pdf(
+        self,
+        output_path: str,
+        markdown_path: Optional[str] = None,
+        markdown_text: Optional[str] = None,
+        pdf_engine: Optional[str] = None,
+        toc: bool = False,
+        title: Optional[str] = None,
+        author: Optional[str] = None,
+        date: Optional[str] = None,
+        base_path: Optional[str] = None,
+        extra_args: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Convert Markdown to PDF using pandoc as the parser and one of several
+        available PDF rendering engines as the backend.
+
+        Provide either `markdown_path` (a .md file) or `markdown_text` (an
+        inline string), but not both. The output PDF is written to `output_path`.
+
+        Engine selection:
+            If `pdf_engine` is None, the first engine found on PATH is used,
+            preferring quality: xelatex > pdflatex > tectonic > weasyprint > wkhtmltopdf.
+            If a specific engine is requested but not on PATH, an error is returned
+            listing what *is* available.
+
+        Args:
+            output_path: Where to write the resulting PDF (required).
+            markdown_path: Path to a .md file. Mutually exclusive with markdown_text.
+            markdown_text: Inline markdown content. Mutually exclusive with markdown_path.
+            pdf_engine: Force a specific engine ("xelatex", "pdflatex", "tectonic",
+                "weasyprint", "wkhtmltopdf"). Default: auto-detect.
+            toc: Generate a table of contents from headings.
+            title: Document title (overrides any YAML frontmatter title).
+            author: Document author (overrides any YAML frontmatter author).
+            date: Document date string (overrides any YAML frontmatter date).
+            base_path: Resource resolution base for relative image references.
+                Defaults to the markdown file's directory when markdown_path is used.
+            extra_args: Additional raw pandoc CLI arguments (advanced).
+
+        Returns:
+            Dict with output_path, file_size, engine_used, conversion_time, and
+            (when applicable) detected_engines listing what's available on the host.
+        """
+        import shutil
+
+        start_time = time.time()
+
+        ENGINE_PREFERENCE = ["xelatex", "pdflatex", "tectonic", "weasyprint", "wkhtmltopdf"]
+
+        try:
+            # Optional dep check — pypandoc is gated behind the [markdown] extra
+            try:
+                import pypandoc
+            except ImportError:
+                return {
+                    "error": (
+                        "pypandoc is not installed. Install with: "
+                        "pip install mcp-pdf[markdown]   (also requires the pandoc "
+                        "binary and a PDF engine on PATH)"
+                    ),
+                    "conversion_time": round(time.time() - start_time, 2),
+                }
+
+            # Verify pandoc binary is reachable — pypandoc raises OSError if missing
+            try:
+                pypandoc.get_pandoc_version()
+            except OSError:
+                return {
+                    "error": (
+                        "pandoc binary not found on PATH. Install pandoc: "
+                        "https://pandoc.org/installing.html"
+                    ),
+                    "conversion_time": round(time.time() - start_time, 2),
+                }
+
+            # Validate input — exactly one of markdown_path or markdown_text
+            if bool(markdown_path) == bool(markdown_text):
+                return {
+                    "error": "Provide exactly one of markdown_path or markdown_text",
+                    "conversion_time": round(time.time() - start_time, 2),
+                }
+
+            # Validate output path
+            output = validate_output_path(output_path)
+            output.parent.mkdir(parents=True, exist_ok=True)
+
+            # Detect available PDF engines on PATH
+            available_engines = [e for e in ENGINE_PREFERENCE if shutil.which(e)]
+
+            # Pick engine: explicit override or first available
+            if pdf_engine:
+                if not shutil.which(pdf_engine):
+                    return {
+                        "error": (
+                            f"Requested PDF engine '{pdf_engine}' not found on PATH. "
+                            f"Available engines: {available_engines or 'none'}"
+                        ),
+                        "detected_engines": available_engines,
+                        "conversion_time": round(time.time() - start_time, 2),
+                    }
+                engine = pdf_engine
+            else:
+                if not available_engines:
+                    return {
+                        "error": (
+                            "No PDF engine found on PATH. Install one of: "
+                            + ", ".join(ENGINE_PREFERENCE)
+                        ),
+                        "conversion_time": round(time.time() - start_time, 2),
+                    }
+                engine = available_engines[0]
+
+            # Build pandoc arguments
+            args: List[str] = [f"--pdf-engine={engine}"]
+            if toc:
+                args.append("--toc")
+            if title:
+                args.extend(["-M", f"title={title}"])
+            if author:
+                args.extend(["-M", f"author={author}"])
+            if date:
+                args.extend(["-M", f"date={date}"])
+
+            # Resource path for relative image refs — defaults to source dir
+            if base_path:
+                resource_dir = Path(base_path).resolve()
+            elif markdown_path:
+                resource_dir = Path(markdown_path).resolve().parent
+            else:
+                resource_dir = None
+
+            if resource_dir:
+                args.extend(["--resource-path", str(resource_dir)])
+
+            if extra_args:
+                args.extend(extra_args)
+
+            # Convert — file path or inline text
+            if markdown_path:
+                source_path = Path(markdown_path).resolve()
+                if not source_path.is_file():
+                    return {
+                        "error": f"Markdown file not found: {markdown_path}",
+                        "conversion_time": round(time.time() - start_time, 2),
+                    }
+                pypandoc.convert_file(
+                    str(source_path),
+                    to="pdf",
+                    outputfile=str(output),
+                    extra_args=args,
+                )
+            else:
+                pypandoc.convert_text(
+                    markdown_text,
+                    to="pdf",
+                    format="md",
+                    outputfile=str(output),
+                    extra_args=args,
+                )
+
+            file_size = output.stat().st_size
+
+            return {
+                "output_path": str(output),
+                "file_size": file_size,
+                "file_size_kb": round(file_size / 1024, 2),
+                "engine_used": engine,
+                "detected_engines": available_engines,
+                "toc": toc,
+                "conversion_time": round(time.time() - start_time, 2),
+            }
+
+        except RuntimeError as e:
+            # pypandoc raises RuntimeError for pandoc subprocess failures —
+            # the message often contains the engine's stderr, which is the most
+            # useful signal a user can get for typesetting errors
+            error_msg = sanitize_error_message(str(e))
+            logger.error(f"Markdown to PDF conversion failed: {error_msg}")
+            return {
+                "error": f"Pandoc conversion failed: {error_msg}",
+                "conversion_time": round(time.time() - start_time, 2),
+            }
+        except Exception as e:
+            error_msg = sanitize_error_message(str(e))
+            logger.error(f"Markdown to PDF failed: {error_msg}")
+            return {
+                "error": error_msg,
+                "conversion_time": round(time.time() - start_time, 2),
+            }
