@@ -6,7 +6,7 @@
 
 **A FastMCP server for PDF processing**
 
-*47 tools for text extraction, OCR, tables, forms, annotations, markdown↔PDF, and more*
+*49 tools for text extraction, OCR, tables, forms, XFA, annotations, markdown↔PDF, and more*
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square)](https://www.python.org/downloads/)
 [![FastMCP](https://img.shields.io/badge/FastMCP-2.0+-green.svg?style=flat-square)](https://github.com/jlowin/fastmcp)
@@ -32,6 +32,7 @@ MCP PDF extracts content from PDFs using multiple libraries with automatic fallb
 - **Annotations** - sticky notes, highlights, stamps
 - **Vector graphics** - extract to SVG for schematics and technical drawings
 - **Format conversion** - PDF ↔ Markdown (PDF→MD via PyMuPDF, MD→PDF via pandoc)
+- **XFA forms** - Schema extraction for dynamic Adobe LiveCycle forms that no open-source library can render
 
 ---
 
@@ -112,10 +113,23 @@ uv run python examples/verify_installation.py
 
 | Tool | What it does |
 |------|-------------|
-| `extract_form_data` | Get form field names and values |
+| `extract_form_data` | Get form field names and values (AcroForm) |
 | `fill_form_pdf` | Fill form fields from JSON |
 | `create_form_pdf` | Create new forms with text fields, checkboxes, dropdowns |
 | `add_form_fields` | Add fields to existing PDFs |
+
+Field types are reported in a **portable six-term vocabulary** (`text/checkbox/radio/dropdown/date/signature` + `button/unknown`) shared between AcroForm and XFA tools, so callers don't have to learn two models.
+
+### XFA Forms (Dynamic Adobe LiveCycle)
+
+Real-estate forms, mortgage forms, government forms — many are **dynamic XFA**, where the layout + fields live in an XFA program that only Adobe's runtime can render. Every open-source PDF library (PyMuPDF, pdfium, MuPDF, pikepdf) only sees the static "Open in Adobe Reader" placeholder page. These tools recover the form *schema* instead.
+
+| Tool | What it does |
+|------|-------------|
+| `is_xfa_pdf` | Detect XFA + classify as dynamic / static. Use for branching before extract_form_data or convert_to_images |
+| `extract_xfa_fields` | Parse the XFA template for field names, captions, UI types. Splits into shared (cross-form canonical), positional (opaque codes), and plumbing (producer internals, dropped) |
+
+`extract_xfa_fields` defaults to the **zipForm producer profile** (Lone Wolf / zipForm Plus — the most common XFA producer in the wild). Pass `profile="generic"` plus `extra_plumbing_patterns` / `extra_positional_patterns` for other producers. The `original` XFA name appears on every field as the round-trip key for filling. `canonical_name` appears only on shared fields. `canonical_separator` chooses `_` (snake, default) / `.` (dotted) / `-` (kebab). `include_design_time_bbox=True` opts into best-effort geometry — not authoritative for dynamic XFA (subforms reflow at render time).
 
 ### Permit Forms (Coordinate-Based)
 

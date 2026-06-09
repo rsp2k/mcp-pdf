@@ -19,6 +19,7 @@ import io
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
 
 from ..security import validate_pdf_path, validate_output_path, sanitize_error_message
+from ..xfa import is_xfa_pdf as _detect_xfa
 from .utils import parse_pages_parameter
 
 logger = logging.getLogger(__name__)
@@ -483,6 +484,21 @@ class PDFUtilitiesMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
+
+            # XFA early-detect — dynamic XFA renders to the Adobe "Open in
+            # Reader" placeholder page, not the real form. We still produce
+            # the rendered image (caller may want it), but flag what they're
+            # actually getting so they don't trust it as the form layout.
+            xfa_info = _detect_xfa(str(path))
+            xfa_warning = None
+            if xfa_info["is_xfa"] and xfa_info["xfa_type"] == "dynamic":
+                xfa_warning = (
+                    "Dynamic XFA form. The rendered image is the Adobe "
+                    "placeholder page, NOT the real form layout. Use "
+                    "extract_xfa_fields for the form schema; only Adobe "
+                    "Reader can render the actual form."
+                )
+
             doc = fitz.open(str(path))
             total_pages = len(doc)
 
@@ -541,7 +557,7 @@ class PDFUtilitiesMixin(MCPMixin):
 
             total_size = sum(img["size_bytes"] for img in converted_images)
 
-            return {
+            response = {
                 "success": True,
                 "conversion_summary": {
                     "pages_requested": len(page_numbers),
@@ -558,6 +574,11 @@ class PDFUtilitiesMixin(MCPMixin):
                 },
                 "conversion_time": round(time.time() - start_time, 2)
             }
+            if xfa_warning:
+                response["is_xfa"] = True
+                response["xfa_type"] = "dynamic"
+                response["warning"] = xfa_warning
+            return response
 
         except Exception as e:
             error_msg = sanitize_error_message(str(e))

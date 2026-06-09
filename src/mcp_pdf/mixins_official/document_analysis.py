@@ -18,6 +18,7 @@ import io
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
 
 from ..security import validate_pdf_path, sanitize_error_message
+from ..xfa import is_xfa_pdf as _detect_xfa
 
 logger = logging.getLogger(__name__)
 
@@ -382,6 +383,17 @@ class DocumentAnalysisMixin(MCPMixin):
             else:
                 health_status = "Poor"
 
+            # Detect XFA — surface up-front since dynamic XFA changes what
+            # other tools (extract_form_data, convert_to_images, ocr_pdf) can
+            # actually deliver.
+            xfa_info = _detect_xfa(str(path))
+            if xfa_info["is_xfa"] and xfa_info["xfa_type"] == "dynamic":
+                warnings.append(
+                    "Dynamic XFA form detected. Most tools will only see the "
+                    "Adobe placeholder page; use extract_xfa_fields for the "
+                    "form schema."
+                )
+
             return {
                 "success": True,
                 "health_score": health_score,
@@ -399,6 +411,8 @@ class DocumentAnalysisMixin(MCPMixin):
                     "file_size_mb": round(file_size_mb, 2),
                     "pdf_version": pdf_version,
                     "is_encrypted": is_encrypted,
+                    "is_xfa": xfa_info["is_xfa"],
+                    "xfa_type": xfa_info["xfa_type"],
                     "sample_pages_analyzed": sample_pages,
                     "estimated_text_density": round(avg_text_per_page, 1)
                 },
