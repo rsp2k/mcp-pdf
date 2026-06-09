@@ -1,6 +1,6 @@
 [project]
 name = "mcp-pdf"
-version = "2.2.1"
+version = "2.3.0"
 description = "Secure FastMCP server for comprehensive PDF processing - text extraction, OCR, table extraction, forms, annotations, and more"
 authors = [{name = "Ryan Malloy", email = "ryan@malloys.us"}]
 readme = "README.md"
@@ -103,6 +103,11 @@ build-backend = "hatchling.build"
 # (The PII audit also runs against the unpacked sdist before each publish —
 # see ~/.claude/rules/python.md.)
 [tool.hatch.build.targets.sdist]
+# force-include re-adds files that gitignore (e.g. `*.pdf`) would otherwise
+# block — the fixture under tests/fixtures/ is small, deliberate, and required
+# by tests/test_xfa.py at runtime. Unlike `include`, force-include is additive,
+# not restrictive.
+force-include = {"tests/fixtures/xfa/synthetic_dynamic_xfa.pdf" = "tests/fixtures/xfa/synthetic_dynamic_xfa.pdf"}
 exclude = [
   "CLAUDE.md",          # operator-private project context
   ".env", ".env.local", # never ship credentials
@@ -115,6 +120,8 @@ exclude = [
   "examples/*.pdf",     # demo PDFs are large + not needed by end users
   "examples/test_demo.*",
   "tests/CopperSprings_DigitalPortfolio.pdf",  # large fixture PDF
+  "**/page_*.png",      # convert_to_images output artifacts (test side-effects)
+  "docs/agent-threads/",   # project coordination history, not for end users
   "test_security_features.py",
   "test_integration.py",
   "MCPMIXIN_*.md",      # internal architecture/migration notes

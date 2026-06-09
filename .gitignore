@@ -76,6 +76,8 @@ dmypy.json
 
 # PDF test files
 *.pdf
+# Exception: test fixtures are deliberate, small, license-clean.
+!tests/fixtures/**/*.pdf
 test_pdfs/
 sample_pdfs/
 

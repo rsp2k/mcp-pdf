@@ -19,6 +19,7 @@ import fitz  # PyMuPDF
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
 
 from ..security import validate_pdf_path, validate_output_path, sanitize_error_message
+from ..xfa import extract_xfa_schema, is_xfa_pdf as _detect_xfa
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,27 @@ class FormManagementMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
+
+            # XFA early-detect — dynamic XFA forms have no AcroForm widgets,
+            # so we'd return total_fields=0 and the user would think the form
+            # is empty. Surface the real diagnosis + a pointer to the right tool.
+            xfa_info = _detect_xfa(str(path))
+            if xfa_info["is_xfa"] and xfa_info["xfa_type"] == "dynamic":
+                return {
+                    "success": False,
+                    "is_xfa": True,
+                    "xfa_type": "dynamic",
+                    "error": (
+                        "Dynamic XFA form — fields are not in AcroForm and "
+                        "cannot be extracted by this tool."
+                    ),
+                    "hint": (
+                        "Use extract_xfa_fields to get the XFA field schema "
+                        "(names, types, captions, shared/positional categories)."
+                    ),
+                    "extraction_time": round(time.time() - start_time, 2),
+                }
+
             doc = fitz.open(str(path))
 
             form_fields = []
@@ -404,7 +426,16 @@ class FormManagementMixin(MCPMixin):
 
     # Helper methods
     def _get_field_type(self, widget) -> str:
-        """Determine the field type from widget"""
+        """Map PyMuPDF widget type to the portable cross-tool vocabulary.
+
+        Aligned with the XFA tool (extract_xfa_fields) so callers see the same
+        six core terms regardless of which form system the PDF uses:
+        text / checkbox / radio / dropdown / date / signature, plus
+        button / unknown for edge cases. Notably, listbox + combobox both
+        collapse to "dropdown" — the distinction is widget-hover behavior, not
+        semantic field type, and callers asking "is this a dropdown?" don't
+        care which one it is.
+        """
         field_type = getattr(widget, 'field_type', 0)
 
         # Field type constants from PyMuPDF
@@ -417,10 +448,119 @@ class FormManagementMixin(MCPMixin):
         elif field_type == fitz.PDF_WIDGET_TYPE_TEXT:
             return "text"
         elif field_type == fitz.PDF_WIDGET_TYPE_LISTBOX:
-            return "listbox"
+            return "dropdown"
         elif field_type == fitz.PDF_WIDGET_TYPE_COMBOBOX:
-            return "combobox"
+            return "dropdown"
         elif field_type == fitz.PDF_WIDGET_TYPE_SIGNATURE:
             return "signature"
         else:
             return "unknown"
+
+    @mcp_tool(
+        name="is_xfa_pdf",
+        description=(
+            "Detect whether a PDF is XFA (Adobe LiveCycle / dynamic forms) "
+            "and whether it's dynamic or static. Dynamic XFA forms can't be "
+            "rendered by any open-source PDF library — only Adobe's runtime "
+            "executes them. Use this to branch BEFORE calling extract_form_data "
+            "or convert_to_images on a PDF that might be dynamic XFA. Returns "
+            "{is_xfa, xfa_type: 'dynamic'|'static'|None, has_acroform}."
+        )
+    )
+    async def is_xfa_pdf(self, pdf_path: str) -> Dict[str, Any]:
+        """Detect XFA presence and type (dynamic vs static).
+
+        Args:
+            pdf_path: Path to PDF file or HTTPS URL.
+
+        Returns:
+            Dict with is_xfa (bool), xfa_type ("dynamic" / "static" / None),
+            and has_acroform (bool).
+        """
+        start_time = time.time()
+        try:
+            path = await validate_pdf_path(pdf_path)
+            result = _detect_xfa(str(path))
+            result["detection_time"] = round(time.time() - start_time, 2)
+            return result
+        except Exception as e:
+            error_msg = sanitize_error_message(str(e))
+            logger.error(f"XFA detection failed: {error_msg}")
+            return {
+                "is_xfa": False,
+                "xfa_type": None,
+                "has_acroform": False,
+                "error": error_msg,
+                "detection_time": round(time.time() - start_time, 2),
+            }
+
+    @mcp_tool(
+        name="extract_xfa_fields",
+        description=(
+            "Extract the XFA template field schema (names, captions, UI types) "
+            "from a dynamic XFA PDF. Recovers form structure that extract_form_data "
+            "can't reach because the fields aren't in AcroForm. Uses the zipForm "
+            "producer profile by default; pass profile='generic' for forms from "
+            "other producers and supply extra_plumbing_patterns / "
+            "extra_positional_patterns. Returns shared (canonical) + positional "
+            "+ plumbing-dropped field breakdown. The `original` XFA name is on "
+            "every field — that's the round-trip key for actually filling the form."
+        )
+    )
+    async def extract_xfa_fields(
+        self,
+        pdf_path: str,
+        profile: str = "zipform",
+        extra_plumbing_exact: Optional[List[str]] = None,
+        extra_plumbing_patterns: Optional[List[str]] = None,
+        extra_positional_patterns: Optional[List[str]] = None,
+        canonical_separator: str = "_",
+        include_design_time_bbox: bool = False,
+    ) -> Dict[str, Any]:
+        """Extract the XFA field schema from a dynamic-XFA PDF.
+
+        Args:
+            pdf_path: Path to PDF file or HTTPS URL.
+            profile: Producer profile — "zipform" (Lone Wolf / zipForm Plus
+                conventions) or "generic" (only the Global_Info- shared-prefix
+                convention; callers add producer-specific patterns themselves).
+            extra_plumbing_exact: Additional exact field names to drop as plumbing.
+            extra_plumbing_patterns: Regex patterns (strings) for additional
+                plumbing fields. Matched case-insensitively.
+            extra_positional_patterns: Regex patterns (strings) identifying
+                additional opaque positional codes.
+            canonical_separator: Separator for canonical names — "_" (snake,
+                default), "." (dotted), "-" (kebab).
+            include_design_time_bbox: Include best-effort design-time geometry
+                on every field. NOT authoritative for dynamic XFA — coordinates
+                reflow at Adobe render time. Useful as a hint, not a source of
+                truth.
+
+        Returns:
+            Dict matching the response shape in
+            docs/agent-threads/xfa-form-support/004-*.md — is_xfa, xfa_type,
+            xfa_parts, field_count, fields (with original on every entry,
+            canonical_name only on shared), shared_fields, plumbing_fields_dropped,
+            profile_used, warnings.
+        """
+        start_time = time.time()
+        try:
+            path = await validate_pdf_path(pdf_path)
+            result = extract_xfa_schema(
+                str(path),
+                profile=profile,
+                extra_plumbing_exact=extra_plumbing_exact,
+                extra_plumbing_patterns=extra_plumbing_patterns,
+                extra_positional_patterns=extra_positional_patterns,
+                canonical_separator=canonical_separator,
+                include_design_time_bbox=include_design_time_bbox,
+            )
+            result["extraction_time"] = round(time.time() - start_time, 2)
+            return result
+        except Exception as e:
+            error_msg = sanitize_error_message(str(e))
+            logger.error(f"XFA field extraction failed: {error_msg}")
+            return {
+                "error": error_msg,
+                "extraction_time": round(time.time() - start_time, 2),
+            }
