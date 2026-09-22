@@ -41,9 +41,20 @@ class TextExtractionMixin(MCPMixin):
             "response. Use output_directory to control where the file is saved, "
             "or set inline=True to get full text in the response instead.\n"
             "\n"
-            "Leave `method` at \"auto\" (which uses PyMuPDF). In the current "
-            "build the other three values are not wired up: they return EMPTY "
-            "text with success=true, writing a zero-byte file."
+            "`method` defaults to \"auto\", which is what you want: it tries "
+            "PyMuPDF, then pdfplumber, then pypdf, and returns the first "
+            "engine that finds text. `method_used` names the winner, and "
+            "`methods_attempted` appears when earlier engines were skipped.\n"
+            "\n"
+            "Name an engine to force it: \"pymupdf\" (fastest), \"pdfplumber\" "
+            "(slower, reconstructs multi-column layout when combined with "
+            "preserve_layout=True), \"pypdf\" (slowest and layout-blind, but "
+            "most tolerant of malformed PDFs). A named engine that cannot read "
+            "the file raises rather than quietly returning nothing.\n"
+            "\n"
+            "Empty text with success=true means every engine ran and found no "
+            "text, which is the signature of a scanned PDF; the response "
+            "carries an extraction_warning pointing at ocr_pdf."
         ),
         annotations={
             "readOnlyHint": False,       # writes a .txt file unless inline=True
@@ -74,9 +85,13 @@ class TextExtractionMixin(MCPMixin):
             pdf_path: Path to the PDF, or an http(s) URL to fetch.
             pages: 1-based page selection, e.g. "5", "1,3,5", "1-10",
                 "1,3-5,12-20". None (the default) extracts every page.
-            method: Keep "auto" (PyMuPDF). "pymupdf", "pdfplumber" and "pypdf"
-                are declared but not implemented: each returns empty text with
-                success=true and writes a zero-byte file.
+            method: "auto" (default) cascades PyMuPDF -> pdfplumber -> pypdf
+                and keeps the first result containing text; an engine that
+                raises, or that returns nothing, falls through to the next.
+                Name an engine to force it, in which case a failure raises
+                instead of falling through. "pdfplumber" is the one worth
+                naming deliberately, paired with preserve_layout=True, for
+                multi-column pages.
             preserve_layout: Whether to preserve text layout and formatting
             output_directory: Directory to save the text file (default: temp directory)
             inline: Return full text in response instead of writing to file
@@ -118,7 +133,7 @@ class TextExtractionMixin(MCPMixin):
                     )
 
                 extraction_result = await self._extract_text_from_pages(
-                    doc, pages_to_extract, method, preserve_layout
+                    doc, path, pages_to_extract, method, preserve_layout
                 )
                 doc.close()
 
@@ -145,7 +160,7 @@ class TextExtractionMixin(MCPMixin):
 
             # File output mode (default): extract all requested pages, write to file
             extraction_result = await self._extract_text_from_pages(
-                doc, pages_to_extract, method, preserve_layout
+                doc, path, pages_to_extract, method, preserve_layout
             )
             doc.close()
 
@@ -634,7 +649,7 @@ class TextExtractionMixin(MCPMixin):
 
         # Process first chunk
         first_chunk_pages = pages_to_extract[:chunk_pages]
-        result = await self._extract_text_from_pages(doc, first_chunk_pages, method, preserve_layout)
+        result = await self._extract_text_from_pages(doc, path, first_chunk_pages, method, preserve_layout)
 
         # Calculate next chunk hint based on actual pages being extracted
         next_chunk_hint = None
@@ -664,27 +679,127 @@ class TextExtractionMixin(MCPMixin):
             "extraction_time": round(time.time() - start_time, 2)
         }
 
-    async def _extract_text_from_pages(self, doc, pages_to_extract, method, preserve_layout):
-        """Extract text from specified pages using chosen method"""
-        if method == "auto":
-            # Try PyMuPDF first (fastest)
+    def _extract_with_pymupdf(self, doc, pages_to_extract, preserve_layout):
+        """PyMuPDF extraction. Fastest, and correct on most PDFs."""
+        parts = []
+        for page_num in pages_to_extract:
+            page = doc[page_num]
+            page_text = page.get_text("text" if not preserve_layout else "dict")
+            if preserve_layout and isinstance(page_text, dict):
+                page_text = self._extract_layout_text(page_text)
+            parts.append(f"\n\n--- Page {page_num + 1} ---\n\n{page_text}")
+        return "".join(parts).strip()
+
+    def _extract_with_pdfplumber(self, path, pages_to_extract, preserve_layout):
+        """pdfplumber extraction. Slower, better on multi-column layouts.
+
+        ``layout=True`` asks pdfplumber to reconstruct visual position with
+        whitespace, which is the whole reason to reach for it over PyMuPDF.
+        """
+        import pdfplumber
+
+        parts = []
+        with pdfplumber.open(str(path)) as pdf:
+            for page_num in pages_to_extract:
+                if page_num >= len(pdf.pages):
+                    continue
+                page_text = pdf.pages[page_num].extract_text(
+                    layout=preserve_layout
+                ) or ""
+                parts.append(f"\n\n--- Page {page_num + 1} ---\n\n{page_text}")
+        return "".join(parts).strip()
+
+    def _extract_with_pypdf(self, path, pages_to_extract, preserve_layout):
+        """pypdf extraction. Slowest and layout-blind, but the most tolerant
+        of malformed structure, so it is the last resort in the cascade.
+
+        preserve_layout is accepted and ignored: pypdf exposes no layout mode.
+        """
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(path))
+        parts = []
+        for page_num in pages_to_extract:
+            if page_num >= len(reader.pages):
+                continue
+            page_text = reader.pages[page_num].extract_text() or ""
+            parts.append(f"\n\n--- Page {page_num + 1} ---\n\n{page_text}")
+        return "".join(parts).strip()
+
+    async def _extract_text_from_pages(self, doc, path, pages_to_extract, method,
+                                       preserve_layout):
+        """Extract text from the given pages using the requested method.
+
+        `method="auto"` walks the cascade README.md has always advertised,
+        PyMuPDF then pdfplumber then pypdf, taking the first engine that
+        returns non-empty text. An engine that raises, or that succeeds but
+        finds nothing (the signature of a scanned page), falls through to the
+        next. Only when all three come back empty do we report empty, and
+        then with `method_used: "none"` and an `extraction_warning` rather
+        than silently attributing the emptiness to whichever engine ran last.
+
+        A named method runs only that engine and RAISES on failure. It used to
+        hit an unimplemented stub returning `{"text": "", "method_used":
+        method}`, so `method="pdfplumber"` reported success:true with zero
+        characters and wrote a zero-byte file. Empty output and a broken
+        engine looked identical, and the schema invited the mistake: "auto"
+        reports `method_used: "pymupdf"`, so pinning that for determinism was
+        the natural next step and silently returned nothing.
+        """
+        engines = {
+            "pymupdf": lambda: self._extract_with_pymupdf(
+                doc, pages_to_extract, preserve_layout),
+            "pdfplumber": lambda: self._extract_with_pdfplumber(
+                path, pages_to_extract, preserve_layout),
+            "pypdf": lambda: self._extract_with_pypdf(
+                path, pages_to_extract, preserve_layout),
+        }
+
+        if method != "auto":
+            run = engines.get(method)
+            if run is None:
+                raise ValueError(
+                    f"Unknown extraction method {method!r}. "
+                    f"Valid: auto, {', '.join(engines)}"
+                )
+            # Let it raise. A named engine that cannot read the file is a
+            # failure, not an empty document.
+            text = run()
+            result = {"text": text, "method_used": method}
+            if not text:
+                result["extraction_warning"] = (
+                    f"{method} ran successfully but found no text on the "
+                    f"requested pages. The PDF is likely scanned; try ocr_pdf, "
+                    f"or method='auto' to fall through to the other engines."
+                )
+            return result
+
+        attempted = []
+        for name, run in engines.items():
             try:
-                text = ""
-                for page_num in pages_to_extract:
-                    page = doc[page_num]
-                    page_text = page.get_text("text" if not preserve_layout else "dict")
-                    if preserve_layout and isinstance(page_text, dict):
-                        # Extract text while preserving some layout
-                        page_text = self._extract_layout_text(page_text)
-                    text += f"\n\n--- Page {page_num + 1} ---\n\n{page_text}"
-
-                return {"text": text.strip(), "method_used": "pymupdf"}
+                text = run()
             except Exception as e:
-                logger.warning(f"PyMuPDF extraction failed: {e}")
-                return {"text": "", "method_used": "failed", "error": str(e)}
+                logger.warning(f"{name} extraction failed: {e}")
+                attempted.append(f"{name}: {type(e).__name__}")
+                continue
+            if text:
+                return {
+                    "text": text,
+                    "method_used": name,
+                    **({"methods_attempted": attempted} if attempted else {}),
+                }
+            attempted.append(f"{name}: no text found")
 
-        # For other methods, similar implementation would follow
-        return {"text": "", "method_used": method}
+        return {
+            "text": "",
+            "method_used": "none",
+            "methods_attempted": attempted,
+            "extraction_warning": (
+                "All extraction engines ran and none found text. This is the "
+                "signature of a scanned or image-only PDF: use ocr_pdf, or "
+                "is_scanned_pdf to confirm first."
+            ),
+        }
 
     def _extract_layout_text(self, page_dict):
         """Extract text from PyMuPDF dict format while preserving layout"""

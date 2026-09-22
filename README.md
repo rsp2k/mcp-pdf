@@ -229,7 +229,9 @@ The server tries multiple libraries for each operation:
 2. pdfplumber (no dependencies)
 3. Tabula (requires Java)
 
-If a PDF fails with one library, the next is tried automatically.
+If a PDF fails with one library, the next is tried automatically. An engine that raises *and* one that succeeds but finds no text both fall through, so a page PyMuPDF silently returns nothing for still gets tried by pdfplumber and pypdf.
+
+The response tells you what happened: `method_used` names the engine that produced the text, and `methods_attempted` lists the ones skipped and why. When all three come back empty you get `method_used: "none"` plus an `extraction_warning`, rather than the emptiness being attributed to whichever engine happened to run last. Naming an engine explicitly (`method="pdfplumber"`) disables the cascade, and a failure then raises instead of falling through.
 
 ---
 
