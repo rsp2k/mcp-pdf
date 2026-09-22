@@ -452,16 +452,18 @@ class TextExtractionMixin(MCPMixin):
             "verdict is true when more than 60% of sampled pages are textless "
             "OR more than 40% carry a \"large\" image.\n"
             "\n"
-            "Two numbers not to take at face value. image_coverage_percent "
-            "divides image PIXEL area by page area in POINTS, so it is not a "
-            "percentage of the page and routinely exceeds 100 — which also "
-            "makes large_image_present fire for any ordinary embedded photo. "
-            "And `confidence` is confidence that the file IS scanned, not "
-            "confidence in the verdict: 0.9 very likely scanned, 0.7 likely, "
-            "0.6 possibly, 0.2 likely text-based. Because the two are computed "
-            "separately, is_scanned can come back true alongside confidence "
-            "0.2; when they disagree, believe the text figures in "
-            "analysis_summary over either one."
+            "image_coverage_percent is the share of the page area the images "
+            "actually occupy (0-100), measured from their placement "
+            "rectangles, and large_image_present means over half the page. "
+            "`confidence` (0.6-0.9) is confidence IN THE VERDICT, whichever "
+            "way is_scanned went, so a low value means the signals were mixed "
+            "rather than that the document is text-based; read is_scanned for "
+            "the direction and confidence for how much to trust it.\n"
+            "\n"
+            "This is a heuristic over a 10-page sample, not a guarantee. A "
+            "born-digital report that is mostly full-bleed figures can read as "
+            "scanned, and a scan with an OCR text layer already applied reads "
+            "as text-based, which is usually the answer you want."
         ),
         annotations={
             "readOnlyHint": True,        # opens the PDF, writes nothing
@@ -479,13 +481,15 @@ class TextExtractionMixin(MCPMixin):
         Returns:
             Dict with success plus:
               - is_scanned: the verdict
-              - confidence: 0.2-0.9, how likely it is scanned (see description)
+              - confidence: 0.6-0.9, confidence IN THAT VERDICT, whichever way
+                it went. A low number means the signals were mixed, not that
+                the document is text-based; read is_scanned for the direction.
               - analysis_summary: pages_analyzed, pages_with_minimal_text,
                 pages_with_large_images, total_pages
               - page_analysis.text_analysis: per page, text_length and has_text
               - page_analysis.image_analysis: per page, image_count,
-                image_coverage_percent (pixels over points, not a real
-                percentage) and large_image_present
+                image_coverage_percent (fraction of the page area the images
+                actually occupy, 0-100) and large_image_present (>50%)
               - recommendations: one line naming OCR or standard extraction
         """
         start_time = time.time()
@@ -518,16 +522,27 @@ class TextExtractionMixin(MCPMixin):
                 for img in images:
                     try:
                         xref = img[0]
-                        pix = pymupdf.Pixmap(doc, xref)
-                        image_area = pix.width * pix.height
-                        total_image_area += image_area
-                        pix = None
-                    except:
+                        # Measure the area the image OCCUPIES ON THE PAGE, in
+                        # points, not its pixel dimensions. This used to be
+                        # pix.width * pix.height, a pixel count, divided below
+                        # by a page area in points. The ratio of those two
+                        # units means nothing: a 2000x1500 photo placed in a
+                        # 4x3 inch box on a Letter page scored 3,000,000 /
+                        # 484,704 = 619% "coverage", so large_image_present
+                        # (threshold 0.5) fired on essentially any photo.
+                        for rect in page.get_image_rects(xref):
+                            total_image_area += abs(rect.width * rect.height)
+                    except Exception:
+                        # get_image_rects can fail on malformed xrefs; a page
+                        # we cannot measure contributes 0 rather than aborting
+                        # the whole scan.
                         pass
 
                 page_rect = page.rect
                 page_area = page_rect.width * page_rect.height
-                image_coverage = (total_image_area / page_area) if page_area > 0 else 0
+                # Clamp: overlapping or repeated placements can sum past the
+                # page area, and a "312% covered" page helps nobody.
+                image_coverage = min(total_image_area / page_area, 1.0) if page_area > 0 else 0
 
                 image_analysis.append({
                     "page": page_num + 1,
@@ -542,20 +557,34 @@ class TextExtractionMixin(MCPMixin):
             pages_with_minimal_text = sum(1 for t in text_analysis if not t["has_text"])
             pages_with_large_images = sum(1 for i in image_analysis if i["large_image_present"])
 
-            is_likely_scanned = (
-                (pages_with_minimal_text / sample_size) > 0.6 or
-                (pages_with_large_images / sample_size) > 0.4
-            )
+            text_ratio = pages_with_minimal_text / sample_size
+            image_ratio = pages_with_large_images / sample_size
 
-            confidence_score = 0
-            if pages_with_minimal_text == sample_size and pages_with_large_images > 0:
-                confidence_score = 0.9  # Very confident it's scanned
-            elif pages_with_minimal_text > sample_size * 0.8:
-                confidence_score = 0.7  # Likely scanned
-            elif pages_with_large_images > sample_size * 0.6:
-                confidence_score = 0.6  # Possibly scanned
+            is_likely_scanned = text_ratio > 0.6 or image_ratio > 0.4
+
+            # Confidence is confidence IN THE VERDICT above, whichever way it
+            # went. It used to be a separate ladder with its own thresholds
+            # that disagreed with the verdict's: image_ratio of 0.5 makes
+            # is_scanned True (> 0.4) but clears none of the confidence rungs
+            # (needs > 0.6), so the tool returned is_scanned=True alongside
+            # confidence 0.2 and the comment "Likely text-based". A caller
+            # thresholding on confidence would discard a correct positive.
+            if is_likely_scanned:
+                if text_ratio == 1.0 and image_ratio > 0:
+                    confidence_score = 0.9   # no text anywhere, images present
+                elif text_ratio > 0.8:
+                    confidence_score = 0.8   # nearly no text
+                elif text_ratio > 0.6 and image_ratio > 0.4:
+                    confidence_score = 0.75  # both signals agree
+                else:
+                    confidence_score = 0.6   # one signal only, near threshold
             else:
-                confidence_score = 0.2  # Likely text-based
+                if text_ratio == 0 and image_ratio == 0:
+                    confidence_score = 0.9   # text on every page, no big images
+                elif text_ratio < 0.2:
+                    confidence_score = 0.8
+                else:
+                    confidence_score = 0.6   # mixed; some pages look scanned
 
             return {
                 "success": True,
