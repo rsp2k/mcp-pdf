@@ -192,12 +192,17 @@ class AdvancedFormsMixin(MCPMixin):
             "Draw a vertical column of radio-button widgets with a text label "
             "beside each, writing a NEW PDF to output_path.\n"
             "\n"
-            "CAVEAT, read before using: these buttons are NOT mutually "
-            "exclusive. Each one is given its own distinct field name "
-            '("<group_name>_0", "<group_name>_1", ...), and a PDF reader only '
-            "enforces exclusion between widgets that SHARE a single field "
-            "name. A user can therefore tick several. Treat this as a "
-            "labelled checkbox column, or rename the widgets afterwards.\n"
+            "The buttons ARE mutually exclusive: every widget in the group "
+            "shares the one field name you pass as group_name, which is what "
+            "makes a PDF reader allow only one selection, and each carries a "
+            "distinct on-state named after its option label. So the field's "
+            "value is the chosen label (\"Commercial\"), not a generic "
+            "\"Yes\", and \"Off\" means nothing is selected yet.\n"
+            "\n"
+            "extract_form_data therefore reports one entry PER BUTTON, all "
+            "sharing group_name; that is the correct PDF representation of a "
+            "radio group, not a duplicate. To preselect an option, pass the "
+            "label as the value for group_name in fill_form_pdf.\n"
             "\n"
             "`options` is a JSON array of label strings:\n"
             '  ["Residential", "Commercial", "Industrial"]\n'
@@ -235,9 +240,10 @@ class AdvancedFormsMixin(MCPMixin):
             input_path: Path to the source PDF, or an HTTPS URL to fetch.
             output_path: Where to write the modified PDF. Overwritten if it
                 already exists; the source is never modified in place.
-            group_name: Prefix for the widget field names, which become
-                "<group_name>_0", "<group_name>_1" and so on. Because the
-                names differ, the buttons are NOT mutually exclusive.
+            group_name: The AcroForm field name shared by every button in the
+                group. Sharing one name is what makes the buttons mutually
+                exclusive, and the field's value is whichever option label is
+                currently selected ("Off" when none is).
             options: JSON array of label strings, e.g.
                 ["Residential", "Commercial"]. One 15x15 point button is
                 drawn per entry, in array order.
@@ -285,6 +291,7 @@ class AdvancedFormsMixin(MCPMixin):
 
             pdf_page = doc[page_num]
             buttons_added = 0
+            button_xrefs = []
 
             # Add radio buttons
             for i, option_label in enumerate(option_list):
@@ -296,12 +303,21 @@ class AdvancedFormsMixin(MCPMixin):
                     # add_form_fields. A radio button additionally needs a
                     # string field_value set up front, or MuPDF raises
                     # "bad xref" while building its appearance stream.
+                    #
+                    # Every button in the group SHARES one field name. PDF
+                    # enforces mutual exclusion only among widgets that share
+                    # a name, so the previous f"{group_name}_{i}" made each
+                    # button an independent checkbox and the group was not a
+                    # group at all, despite the tool's name.
                     widget = pymupdf.Widget()
-                    widget.field_name = f"{group_name}_{i}"
+                    widget.field_name = group_name
                     widget.field_type = pymupdf.PDF_WIDGET_TYPE_RADIOBUTTON
                     widget.field_value = "Off"
                     widget.rect = button_rect
-                    pdf_page.add_widget(widget)
+                    added = pdf_page.add_widget(widget)
+                    # Remember the xref so the on-state can be renamed after
+                    # the whole group exists (see below).
+                    button_xrefs.append((added.xref, option_label))
 
                     # Add label text next to radio button
                     text_point = pymupdf.Point(x + 20, button_y + 10)
@@ -311,6 +327,25 @@ class AdvancedFormsMixin(MCPMixin):
 
                 except Exception as e:
                     logger.warning(f"Failed to add radio button {i}: {e}")
+
+            # Give each button a DISTINCT on-state named after its option, so
+            # the field's value says which one is selected. PyMuPDF's Widget
+            # API gives every radio kid the same "/Yes" on-state and offers no
+            # way to change it (setting field_value to the label up front
+            # raises "bad xref"), so rewrite the appearance dictionary key
+            # directly. Without this, sharing the field name would make the
+            # buttons mutually exclusive but indistinguishable: selecting any
+            # of them would just set the field to "Yes".
+            for xref, label in button_xrefs:
+                try:
+                    kind, ap_n = doc.xref_get_key(xref, "AP/N")
+                    if kind == "dict" and "/Yes" in ap_n:
+                        doc.xref_set_key(xref, "AP/N", ap_n.replace("/Yes", f"/{label}"))
+                    doc.xref_set_key(xref, "AS", "/Off")   # start unselected
+                except Exception as exc:
+                    logger.warning(
+                        "Could not set on-state for radio option %r: %s", label, exc
+                    )
 
             # Save modified PDF
             doc.save(str(output_pdf_path))
