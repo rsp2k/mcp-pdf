@@ -1,6 +1,6 @@
 [project]
 name = "mcp-pdf"
-version = "2.3.1"
+version = "2026.09.21"
 description = "Secure FastMCP server for comprehensive PDF processing - text extraction, OCR, table extraction, forms, annotations, and more"
 authors = [{name = "Ryan Malloy", email = "ryan@supported.systems"}]
 readme = "README.md"
@@ -49,7 +49,7 @@ Homepage = "https://github.com/rsp2k/mcp-pdf"
 Documentation = "https://github.com/rsp2k/mcp-pdf#readme"
 Repository = "https://github.com/rsp2k/mcp-pdf.git"
 Issues = "https://github.com/rsp2k/mcp-pdf/issues"
-Changelog = "https://github.com/rsp2k/mcp-pdf/releases"
+Changelog = "https://github.com/rsp2k/mcp-pdf/blob/main/CHANGELOG.md"
 
 [project.scripts]
 mcp-pdf = "mcp_pdf.server:main"
@@ -80,17 +80,21 @@ all = [
     "pypandoc>=1.13",
 ]
 
-# Development dependencies
+# Development dependencies, for `pip install mcp-pdf[dev]`.
+# NOTE: [dependency-groups].dev below is the list `uv sync --dev` actually
+# uses. These two have drifted apart before; keep the shared pins aligned.
+# twine must be >=7 because hatchling emits Metadata-Version 2.5, which
+# twine 6.x rejects with "'2.5' is not a valid metadata version".
 dev = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
     "build>=0.10.0",
-    "twine>=4.0.0",
-    "safety>=3.0.0",
-    "pip-audit>=2.0.0",
+    "twine>=7.0.0",
+    "safety>=3.2.11",
+    "pip-audit>=2.9.0",
 ]
 
 [build-system]
@@ -142,5 +146,5 @@ dev = [
     "pytest-cov>=6.2.1",
     "reportlab>=4.4.3",
     "safety>=3.2.11",
-    "twine>=6.1.0",
+    "twine>=7.0.0",
 ]

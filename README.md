@@ -343,6 +343,12 @@ uv run ruff check src/ tests/
 
 ---
 
+## Versioning
+
+CalVer, `YYYY.MM.DD`, with a PEP 440 post-release segment for same-day fixes (`2026.09.21.1`). This package is a thin layer over PyMuPDF, pdfplumber, pypdf, Camelot, Tabula, Tesseract, pandoc and several system binaries, and most surprising behavior traces back to one of those. When a PDF misbehaves, the useful question is "when was this last tested against those?", which a date answers.
+
+Releases before `2026.09.21` used semver. PEP 440 compares the release tuple numerically, so `(2026, 9, 21)` sorts after `(2, 3, 1)` and `pip install --upgrade` works correctly across the switch. See [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 MIT

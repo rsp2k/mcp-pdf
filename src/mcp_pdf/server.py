@@ -11,6 +11,7 @@ from pathlib import Path
 from fastmcp import FastMCP
 
 # Import our mixins using the official pattern
+from ._version import __version__
 from .mixins_official.text_extraction import TextExtractionMixin
 from .mixins_official.table_extraction import TableExtractionMixin
 from .mixins_official.document_analysis import DocumentAnalysisMixin
@@ -108,7 +109,8 @@ class PDFServerOfficial:
             """Get detailed server information including mixins and configuration"""
             return {
                 "server_name": "MCP PDF Tools (Official FastMCP Pattern)",
-                "version": "2.0.12",
+                "version": __version__,
+                "versioning_scheme": "CalVer (YYYY.MM.DD)",
                 "architecture": "Official FastMCP Mixin Pattern",
                 "total_mixins": len(self.mixins),
                 "mixins": [
@@ -159,14 +161,7 @@ def create_server() -> PDFServerOfficial:
 def main():
     """Main entry point for the MCP server"""
     try:
-        # Get package version
-        try:
-            from importlib.metadata import version
-            package_version = version("mcp-pdf")
-        except:
-            package_version = "2.1.0"
-
-        logger.info(f"🎬 MCP PDF Tools Server v{package_version} (Official Pattern)")
+        logger.info(f"🎬 MCP PDF Tools Server v{__version__} (Official Pattern)")
 
         # Create and run the server
         server = create_server()

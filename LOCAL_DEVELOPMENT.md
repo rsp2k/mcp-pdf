@@ -47,7 +47,7 @@ The `--` separator is required so the Claude CLI doesn't try to parse `--directo
 Useful for confirming that a regression report on a published version actually reproduces.
 
 ```bash
-claude mcp add -s project pdf-tools-pinned -- uvx --from "mcp-pdf==2.2.0" mcp-pdf
+claude mcp add -s project pdf-tools-pinned -- uvx --from "mcp-pdf==2026.09.21" mcp-pdf
 ```
 
 ### Pattern 3 — Latest from PyPI (post-publish smoke test)
@@ -107,7 +107,12 @@ A short list to walk through against a real PDF before publishing. Update versio
 ## Publishing pipeline
 
 ```bash
-# 1. Bump version in pyproject.toml (date-based or semver — see global rules)
+# 1. Bump version in pyproject.toml. CalVer, YYYY.MM.DD:
+#      version = "2026.09.21"
+#    Same-day fix? Append a PEP 440 post-release segment: "2026.09.21.1"
+#    Do NOT hardcode it anywhere else; mcp_pdf._version reads package metadata
+#    and __init__/server_info both source from there.
+#    Add a CHANGELOG.md entry in the same commit.
 
 # 2. Sync uv.lock — easy to forget; the lockfile and pyproject.toml versions
 #    must agree or the published wheel and sdist disagree
