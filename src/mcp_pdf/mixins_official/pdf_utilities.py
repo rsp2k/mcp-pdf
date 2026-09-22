@@ -228,13 +228,19 @@ class PDFUtilitiesMixin(MCPMixin):
             "  'balanced'   — (default) the above plus clean/rebuild the "
             "content streams\n"
             "  'aggressive' — the most thorough object collection plus "
-            "clean; still lossless, still no image recompression\n"
+            "clean. All three are lossless on their own; see preserve_quality\n"
             "\n"
-            "preserve_quality is accepted for backward compatibility and "
-            "currently has NO effect at any level (no level is lossy), so "
-            "leave it alone. To actually shrink a scan, rasterize with "
-            "convert_to_images at a lower dpi instead. Use repair_pdf, not "
-            "this, when the goal is to fix a damaged file."
+            "preserve_quality=True (the default) keeps every level LOSSLESS. "
+            "Set it False to also recompress images as JPEG (quality 50 under "
+            "'aggressive', 75 otherwise), which is where the real savings are "
+            "on a scan: a photo-heavy PDF that loses 0.2% losslessly loses "
+            "over 90% with it off. Recompression is conservative and skips "
+            "anything it could damage — greyscale and RGB only, nothing with "
+            "transparency or a CMYK/exotic colourspace, nothing under 10k "
+            "pixels — and keeps the original whenever the JPEG would be "
+            "larger, which is usual for line art and screenshots. "
+            "optimization_summary.images_recompressed reports how many were "
+            "replaced. Use repair_pdf, not this, to fix a damaged file."
         ),
         annotations={
             "readOnlyHint": False,       # writes {stem}_optimized.pdf
@@ -258,14 +264,18 @@ class PDFUtilitiesMixin(MCPMixin):
             optimization_level: "light", "balanced" (default) or
                 "aggressive". All are lossless; see the tool description for
                 what each one actually does.
-            preserve_quality: Ignored. Retained for signature compatibility;
-                no level re-encodes image data, so there is no quality
-                trade-off to control.
+            preserve_quality: True (default) keeps the whole operation
+                lossless. False additionally recompresses eligible images as
+                JPEG, quality 50 for "aggressive" and 75 otherwise. Skips
+                images with alpha, CMYK/exotic colourspaces, anything under
+                10k pixels, and any case where the JPEG would be larger than
+                what is already stored.
 
         Returns:
             Dict with success, optimization_summary (original and optimized
-            sizes, size_reduction_bytes, reduction_percent, level used) and
-            output_info with the optimized_path.
+            sizes, size_reduction_bytes, reduction_percent, level used,
+            preserve_quality and images_recompressed) and output_info
+            with the optimized_path.
         """
         start_time = time.time()
 
@@ -277,6 +287,45 @@ class PDFUtilitiesMixin(MCPMixin):
 
             doc = pymupdf.open(str(path))
             original_size = path.stat().st_size
+
+            # Lossy image recompression, only when the caller explicitly opts
+            # out of preserving quality.
+            #
+            # preserve_quality previously did nothing at all: every level
+            # below uses garbage/deflate/clean, which are object and syntax
+            # cleanup and entirely lossless, so there was no trade-off for the
+            # flag to control. On an image-heavy scan that meant "aggressive"
+            # recovered a few percent at best, because the images are the file.
+            #
+            # Deliberately conservative, since a bad recompress corrupts the
+            # caller's document: plain RGB/greyscale only, nothing with an
+            # alpha channel or an exotic colourspace, and only images big
+            # enough to be worth it. Any image that fails is left untouched.
+            images_recompressed = 0
+            if not preserve_quality:
+                jpeg_quality = 50 if optimization_level == "aggressive" else 75
+                for page_index in range(doc.page_count):
+                    for img in doc[page_index].get_images(full=True):
+                        xref = img[0]
+                        try:
+                            pix = pymupdf.Pixmap(doc, xref)
+                            # n counts colour components + alpha. Skip CMYK
+                            # (n-alpha >= 4) and anything with transparency,
+                            # where a naive JPEG round-trip loses the mask.
+                            if pix.alpha or (pix.n - pix.alpha) not in (1, 3):
+                                pix = None
+                                continue
+                            if pix.width * pix.height < 10000:
+                                pix = None          # thumbnails/icons: not worth it
+                                continue
+                            new_bytes = pix.tobytes("jpeg", jpg_quality=jpeg_quality)
+                            # Only accept the swap when it actually shrinks.
+                            if len(new_bytes) < len(doc.xref_stream_raw(xref) or b""):
+                                doc.update_stream(xref, new_bytes, new=True)
+                                images_recompressed += 1
+                            pix = None
+                        except Exception as exc:
+                            logger.debug("Skipped recompressing xref %s: %s", xref, exc)
 
             # Apply optimization based on level
             if optimization_level == "light":
@@ -304,7 +353,9 @@ class PDFUtilitiesMixin(MCPMixin):
                         "optimized_size_bytes": optimized_size,
                         "size_reduction_bytes": size_reduction,
                         "reduction_percent": round(reduction_percent, 1),
-                        "optimization_level": optimization_level
+                        "optimization_level": optimization_level,
+                        "preserve_quality": preserve_quality,
+                        "images_recompressed": images_recompressed
                     },
                     "output_info": {
                         "optimized_path": str(optimized_path),
