@@ -225,15 +225,22 @@ class MiscToolsMixin(MCPMixin):
     @mcp_tool(
         name="extract_charts",
         description=(
-            "SURVEY a PDF's visual elements and guess which of them are "
-            "charts or diagrams. Despite the name it EXTRACTS NOTHING and "
-            "WRITES NO FILES: you get an inventory — page, kind, dimensions "
-            "and a likely_chart flag per element — and no image data at "
-            "all. Use it to find WHICH pages are worth looking at, then "
-            "fetch them with a tool that actually produces files: "
-            "extract_images for the embedded bitmaps, "
-            "extract_vector_graphics for SVG line art and schematics, or "
-            "convert_to_images to render whole pages.\n"
+            "Survey a PDF's visual elements, guess which are charts or "
+            "diagrams, and optionally crop each one out to a PNG.\n"
+            "\n"
+            "Without output_directory it writes nothing and returns only the "
+            "inventory: page, kind, dimensions and a likely_chart flag per "
+            "element. Pass output_directory to also render every flagged "
+            "element, cropped from its page at render_dpi, with the file path "
+            "on each element as image_path. Cropping the PAGE rather than "
+            "pulling the underlying object means a chart assembled from many "
+            "vector strokes comes out as one picture, and a raster chart "
+            "comes out composited with anything drawn over it.\n"
+            "\n"
+            "Related tools, for when this is the wrong shape: extract_images "
+            "for the embedded bitmaps as stored, extract_vector_graphics for "
+            "SVG line art you want to stay vector, convert_to_images to "
+            "render whole pages.\n"
             "\n"
             "Two kinds of element are counted. Embedded raster images are "
             "measured in PIXELS and flagged likely_chart when they are "
@@ -258,8 +265,12 @@ class MiscToolsMixin(MCPMixin):
             "document, so check chart_analysis.pages_analyzed."
         ),
         annotations={
-            "readOnlyHint": True,        # inventories only, extracts nothing
-            "idempotentHint": True,
+            # Writes PNGs only when output_directory is supplied; a call
+            # without it touches nothing. The hints describe what the tool
+            # CAN do, so they have to assume the writing path.
+            "readOnlyHint": False,
+            "destructiveHint": True,     # overwrites same-named PNGs in the target dir
+            "idempotentHint": True,      # same PDF and dpi produce the same crops
             "openWorldHint": True,       # pdf_path may be an HTTPS URL
         },
     )
@@ -267,7 +278,9 @@ class MiscToolsMixin(MCPMixin):
         self,
         pdf_path: str,
         pages: Optional[str] = None,
-        min_size: int = 100
+        min_size: int = 100,
+        output_directory: Optional[str] = None,
+        render_dpi: int = 150
     ) -> Dict[str, Any]:
         """
         Inventory and score the visual elements in a PDF. Writes nothing.
@@ -280,13 +293,20 @@ class MiscToolsMixin(MCPMixin):
             min_size: Minimum width or height for an element to be listed,
                 default 100. Pixels for embedded images, PDF points for
                 vector drawings.
+            output_directory: Where to write cropped PNGs of the elements
+                flagged likely_chart, created if missing. Omit it (the
+                default) to get the inventory only and write nothing.
+            render_dpi: Resolution for those crops, default 150, clamped to
+                36-600. Only used when output_directory is supplied.
 
         Returns:
             Dict with success, chart_analysis (total_visual_elements,
-            likely_charts, pages_with_visuals, pages_analyzed,
-            chart_density), size_distribution bucketed by area (small
-            <20000, medium <100000, large >=100000), the visual_elements
-            inventory, and plain-language insights. No files are produced.
+            likely_charts, pages_with_visuals, pages_analyzed, chart_density,
+            charts_written, output_directory), size_distribution bucketed by
+            area (small <20000, medium <100000, large >=100000), the
+            visual_elements inventory, and plain-language insights. Elements
+            that were rendered carry image_path and image_size_bytes; the rest
+            do not, so check for the key rather than assuming it.
         """
         start_time = time.time()
 
@@ -307,6 +327,10 @@ class MiscToolsMixin(MCPMixin):
             visual_elements = []
             charts_found = 0
 
+            # (page_index, clip_rect, element) for every detected region, so
+            # the rendering pass below can crop each one out of its page.
+            _render_queue = []
+
             for page_num in page_numbers:
                 try:
                     page = doc[page_num]
@@ -322,6 +346,12 @@ class MiscToolsMixin(MCPMixin):
                                 # Heuristic: larger images are more likely to be charts
                                 is_likely_chart = (pix.width > 200 and pix.height > 150) or (pix.width * pix.height > 50000)
 
+                                # Placement rectangle on the page, needed to
+                                # render the region. May be empty if the image
+                                # is referenced but never drawn.
+                                placements = page.get_image_rects(xref)
+                                clip_rect = placements[0] if placements else None
+
                                 element = {
                                     "page": page_num + 1,
                                     "type": "image",
@@ -331,6 +361,8 @@ class MiscToolsMixin(MCPMixin):
                                     "area": pix.width * pix.height,
                                     "likely_chart": is_likely_chart
                                 }
+                                if clip_rect is not None:
+                                    _render_queue.append((page_num, clip_rect, element))
 
                                 visual_elements.append(element)
                                 if is_likely_chart:
@@ -363,6 +395,7 @@ class MiscToolsMixin(MCPMixin):
                                         "complexity": len(items),
                                         "likely_chart": is_likely_chart
                                     }
+                                    _render_queue.append((page_num, rect, element))
 
                                     visual_elements.append(element)
                                     if is_likely_chart:
@@ -372,6 +405,39 @@ class MiscToolsMixin(MCPMixin):
 
                 except Exception as e:
                     logger.warning(f"Failed to analyze page {page_num + 1}: {e}")
+
+            # Render the detected regions to PNG, if asked. Until 2026-09-22
+            # this tool wrote nothing at all despite being called "extract":
+            # it returned an inventory with a geometry-derived likely_chart
+            # flag and no way to actually see any of them. Cropping the page
+            # at each region handles raster and vector identically, and
+            # captures the chart as it is composed on the page rather than as
+            # whatever isolated image object happens to sit underneath.
+            charts_written = 0
+            output_dir = None
+            if output_directory:
+                output_dir = validate_output_path(output_directory)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                dpi = max(36, min(600, render_dpi))
+                for page_index, clip, element in _render_queue:
+                    if not element.get("likely_chart"):
+                        continue          # only the flagged ones
+                    try:
+                        if clip is None or clip.is_empty or clip.is_infinite:
+                            continue
+                        pix = doc[page_index].get_pixmap(clip=clip, dpi=dpi)
+                        name = (f"{path.stem}_p{element['page']}"
+                                f"_{element['type']}{element['element_index']}.png")
+                        target = output_dir / name
+                        pix.save(str(target))
+                        element["image_path"] = str(target)
+                        element["image_size_bytes"] = target.stat().st_size
+                        charts_written += 1
+                    except Exception as exc:
+                        logger.warning(
+                            "Could not render chart on page %s: %s",
+                            element.get("page"), exc
+                        )
 
             doc.close()
 
@@ -391,7 +457,9 @@ class MiscToolsMixin(MCPMixin):
                     "likely_charts": charts_found,
                     "pages_with_visuals": pages_with_visuals,
                     "pages_analyzed": len(page_numbers),
-                    "chart_density": round(charts_found / len(page_numbers), 2) if page_numbers else 0
+                    "chart_density": round(charts_found / len(page_numbers), 2) if page_numbers else 0,
+                    "charts_written": charts_written,
+                    "output_directory": str(output_dir) if output_dir else None
                 },
                 "size_distribution": {
                     "small_elements": len(small_elements),
