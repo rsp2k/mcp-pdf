@@ -456,11 +456,9 @@ class ContentAnalysisMixin(MCPMixin):
             "\"5\", \"1,3,5\", \"1-10\", or mixed \"1,3-5,12-20\"; an "
             "unparseable value falls back to the first 5 pages.\n"
             "\n"
-            "Leave include_coordinates at True unless the response is too "
-            "large: setting it False also DISABLES COLUMN DETECTION, because "
-            "the column heuristic reads the very coordinates it just dropped, "
-            "and every page then reports estimated_columns=1 and layout_type "
-            "\"simple\" or \"complex\". The heuristic itself is crude — it sorts "
+            "include_coordinates only controls response size: set it False to "
+            "drop each block's x1/y1/x2/y2 box from the output. Column "
+            "detection is unaffected either way. The heuristic is crude — it sorts "
             "text-block left edges and counts gaps wider than 50 points, so "
             "indented blocks, sidebars and tables all read as extra columns. "
             "text_coverage_percent sums block bounding-box areas and can exceed "
@@ -489,9 +487,9 @@ class ContentAnalysisMixin(MCPMixin):
             pages: 1-based page selection, e.g. "5", "1,3,5", "1-10",
                 "1,3-5,12-20". None (the default) analyses the FIRST 5 PAGES,
                 not all of them. An unparseable value falls back to the first 5.
-            include_coordinates: Include each text block's x1/y1/x2/y2 box.
-                Keep this True: with False the column heuristic has no
-                coordinates to work from and estimated_columns is always 1.
+            include_coordinates: Include each text block's x1/y1/x2/y2 box in
+                the response. Purely a verbosity switch; estimated_columns and
+                layout_type are computed the same way with it off.
 
         Returns:
             Dict with success plus:
@@ -537,6 +535,7 @@ class ContentAnalysisMixin(MCPMixin):
 
                 # Analyze text blocks
                 text_blocks = []
+                block_x_positions = []   # left edges, for column detection
                 total_text_area = 0
 
                 for block in blocks:
@@ -555,6 +554,16 @@ class ContentAnalysisMixin(MCPMixin):
                             "area": round(block_area, 2),
                             "line_count": len(block["lines"])
                         }
+
+                        # Always record the left edge for column detection.
+                        # This used to be read back out of block_info
+                        # ["coordinates"], which only exists when
+                        # include_coordinates is True, so turning the flag off
+                        # left the detector with an empty list and every page
+                        # reported estimated_columns=1. The flag is supposed to
+                        # control how much we put in the RESPONSE, not whether
+                        # the analysis runs.
+                        block_x_positions.append(block_bbox[0])
 
                         if include_coordinates:
                             block_info["coordinates"] = {
@@ -596,8 +605,10 @@ class ContentAnalysisMixin(MCPMixin):
 
                 # Detect column layout (simplified)
                 if text_blocks:
-                    # Group blocks by x-coordinate to detect columns
-                    x_positions = [block.get("coordinates", {}).get("x1", 0) for block in text_blocks if include_coordinates]
+                    # Group blocks by left edge to detect columns. Sourced from
+                    # block_x_positions, gathered during the block walk above,
+                    # so this works regardless of include_coordinates.
+                    x_positions = list(block_x_positions)
                     if x_positions:
                         x_positions.sort()
                         column_breaks = []
