@@ -22,6 +22,104 @@ original numbers.
 
 ---
 
+## 2026.09.22
+
+Came out of auditing the tool schemas from a calling model's point of view. That
+surfaced fourteen places where the code did not do what its own docstring said,
+and fixing those turned up a dozen real bugs underneath.
+
+### Breaking
+
+- **`add_radio_group` buttons now share one field name.** They previously got
+  `{group}_0`, `{group}_1`, ... and PDF enforces mutual exclusion only among
+  widgets sharing a name, so the "group" was a column of independent
+  checkboxes a user could tick all of. Anything storing the old per-button
+  names needs updating; in exchange the field's value is now the selected
+  option rather than a meaningless `"Yes"`.
+- **`extract_form_data` field types** use the portable vocabulary shared with
+  the XFA tools (`text`, `checkbox`, `radio`, `dropdown`, `date`, `signature`,
+  plus `button` / `unknown`). `listbox` and `combobox` both report as
+  `dropdown`; the original value survives as `field_type_raw`.
+- **`is_xfa_pdf` has a third outcome.** `is_xfa` is `True`, `False`, or `None`,
+  where `None` means detection failed. **Check `detection_failed` before
+  trusting `is_xfa`.**
+- **`detect_structure` rejects an unrecognised `strategies`** instead of
+  running no detector and returning an empty structure with `success: true`.
+
+### Fixed
+
+Tools that reported success while doing nothing:
+
+- `extract_form_data` returned `{"success": false, "error": "document closed"}`
+  for **every valid PDF**, because its success return called `len(doc)` after
+  `doc.close()`.
+- `add_form_fields`, `add_radio_group`, `add_textarea_field` and
+  `add_date_field` created **no widgets at all**. Each called `add_widget()` on
+  a bare `Widget` whose `rect` is `None`, and each tool's own handler swallowed
+  the `AttributeError` and reported success on a field-less PDF.
+- `extract_text`'s `method` parameter: `"pymupdf"`, `"pdfplumber"` and
+  `"pypdf"` hit an unimplemented stub returning empty text with
+  `success: true` and a zero-byte file. All three are now real, and `"auto"`
+  walks the PyMuPDF → pdfplumber → pypdf cascade the README always described
+  but never had.
+- `merge_pdfs` silently discarded every bookmark. They are now carried across
+  with page targets rebased, and reported.
+- `merge_pdfs_advanced(include_toc=True)` failed entirely on an invalid
+  base-14 font name; `add_page_numbers` was accepted and never acted on.
+- `optimize_pdf`'s `preserve_quality` was never read. Setting it `False` now
+  recompresses images: a photo-heavy PDF goes from 0.2% to **93.8%** smaller.
+- `fill_form_pdf` turned on **every** button in a radio group for one data key.
+- `create_form_pdf` silently dropped every dropdown.
+
+Tools reporting constants as measurements:
+
+- `pdf_version` was always `"Unknown"`, `is_linearized` always `False` and
+  `embedded_file_count` permanently `0`, all read from attribute names PyMuPDF
+  does not have. The "old PDF version" warnings guarded by them could never
+  fire.
+- `is_scanned_pdf` divided image area in **pixels** by page area in **points**,
+  so `image_coverage_percent` routinely exceeded 100 and `large_image_present`
+  fired on any photo. Its `confidence` also came from a different threshold
+  ladder than its verdict, so it could return `is_scanned: true` alongside
+  `confidence: 0.2` labelled "likely text-based".
+- `analyze_layout`'s `include_coordinates=False` silently disabled column
+  detection, because the heuristic read back the coordinates it had just
+  dropped.
+- `classify_content`'s documented `"general"` fallback was unreachable; an
+  unmatched document was reported as `"academic"` at confidence 0.0.
+- `detect_structure`'s `"auto"` was byte-identical to `"all"`. It is now
+  adaptive: bookmarks first, heuristics only when there is no usable outline.
+- `batch_extract` reported `success: true` when every section failed.
+- `markdown_to_pdf` had no `success` key on any of its nine return paths.
+
+### Added
+
+- `extract_charts` **extracts**. Pass `output_directory` to crop every flagged
+  region to a PNG. Without it the behaviour is unchanged and nothing is
+  written.
+- `extract_form_data` reports `on_state` and `is_selected` for button widgets,
+  which is how a caller discovers what value selects a radio option in a form
+  they did not create.
+- `add_radio_group` returns `option_values`, the label → export-value mapping
+  (`"Conventional Loan"` → `"Conventional_Loan"`). A PDF name cannot contain a
+  space, and building the on-state straight from the label produced a silently
+  unusable button.
+- All 54 tools carry MCP annotations (`readOnlyHint`, `destructiveHint`,
+  `idempotentHint`, `openWorldHint`), and 17 enum-ish parameters became real
+  JSON-Schema enums, so a wrong value is rejected rather than merely
+  discouraged.
+- Every parameter is documented. JSON-string parameters now state their exact
+  shape with an example, which is what `split_pdf_by_pages` needed: it takes
+  `["1-5","6-10"]`, and `"1"` or `"1-1"` both fail with different errors.
+
+### Changed
+
+- Median tool description went from ~60 characters to ~1,200. Seventeen tools
+  had descriptions under 40 characters.
+- Test suite 105 → 112.
+
+---
+
 ## 2026.09.21.1
 
 Dependency currency, and two declared floors that were fiction.
