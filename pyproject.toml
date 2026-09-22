@@ -53,8 +53,6 @@ Changelog = "https://github.com/rsp2k/mcp-pdf/releases"
 
 [project.scripts]
 mcp-pdf = "mcp_pdf.server:main"
-mcp-pdf-legacy = "mcp_pdf.server_legacy:main"
-mcp-pdf-modular = "mcp_pdf.server_refactored:main"
 
 [project.optional-dependencies]
 # Form creation features (create_form_pdf, advanced form tools)
@@ -118,13 +116,11 @@ exclude = [
   "dist/",
   "examples/page_001.png",
   "examples/*.pdf",     # demo PDFs are large + not needed by end users
-  "examples/test_demo.*",
   "tests/CopperSprings_DigitalPortfolio.pdf",  # large fixture PDF
   "**/page_*.png",      # convert_to_images output artifacts (test side-effects)
   "docs/agent-threads/",   # project coordination history, not for end users
   "test_security_features.py",
   "test_integration.py",
-  "MCPMIXIN_*.md",      # internal architecture/migration notes
   "MCP_DOCX_TOOLS_PLAN.md",
   "claude-mcp-manager", # personal helper script
   "run-mcp-server.sh",

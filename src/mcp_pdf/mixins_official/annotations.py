@@ -3,11 +3,9 @@ Annotations Mixin - PDF annotation and markup operations
 Uses official fastmcp.contrib.mcp_mixin pattern
 """
 
-import asyncio
 import time
 import json
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 import logging
 
 # PDF processing libraries

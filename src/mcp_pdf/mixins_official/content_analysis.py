@@ -3,10 +3,8 @@ Content Analysis Mixin - PDF content classification, summarization, and layout a
 Uses official fastmcp.contrib.mcp_mixin pattern
 """
 
-import asyncio
 import time
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import logging
 import re
 from collections import Counter

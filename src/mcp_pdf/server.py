@@ -9,7 +9,6 @@ from typing import Dict, Any
 from pathlib import Path
 
 from fastmcp import FastMCP
-from fastmcp.contrib.mcp_mixin import MCPMixin
 
 # Import our mixins using the official pattern
 from .mixins_official.text_extraction import TextExtractionMixin
@@ -148,8 +147,8 @@ class PDFServerOfficial:
         """Log a summary of what was registered"""
         logger.info("📋 Registration Summary:")
         logger.info(f"   • {len(self.mixins)} mixins loaded")
-        logger.info(f"   • Tools registered via mixin pattern")
-        logger.info(f"   • Server management tools: 2")
+        logger.info("   • Tools registered via mixin pattern")
+        logger.info("   • Server management tools: 2")
 
 
 def create_server() -> PDFServerOfficial:

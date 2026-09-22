@@ -3,13 +3,10 @@ Miscellaneous Tools Mixin - Additional PDF processing tools to complete coverage
 Uses official fastmcp.contrib.mcp_mixin pattern
 """
 
-import asyncio
 import time
 import json
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import logging
-import re
 
 # PDF processing libraries
 import fitz  # PyMuPDF

@@ -62,7 +62,7 @@ def parse_pages_parameter(pages: Union[str, List[int], None]) -> Optional[List[i
             # Convert 1-based user input to 0-based internal representation
             return [max(0, int(p) - 1) for p in page_list]
 
-        except (ValueError, SyntaxError) as e:
+        except (ValueError, SyntaxError):
             raise ValueError(f"Invalid pages parameter: {pages}. Use format like '1,2,3' or '1-5'")
 
     raise ValueError(f"Unsupported pages parameter type: {type(pages)}")
@@ -146,7 +146,7 @@ async def _download_url_safely(url: str) -> Path:
     """
     # Validate URL
     parsed_url = urlparse(url)
-    if not parsed_url.scheme in ['http', 'https']:
+    if parsed_url.scheme not in ['http', 'https']:
         raise ValueError(f"Unsupported URL scheme: {parsed_url.scheme}")
 
     # Check domain allowlist if configured

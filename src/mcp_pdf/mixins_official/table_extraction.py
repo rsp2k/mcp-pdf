@@ -5,11 +5,9 @@ Uses official fastmcp.contrib.mcp_mixin pattern
 
 import asyncio
 import time
-import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
-import json
 
 # Required
 import pandas as pd
@@ -230,7 +228,6 @@ class TableExtractionMixin(MCPMixin):
     async def _extract_with_pdfplumber(self, path: Path, pages: Optional[str], table_format: str,
                                         max_rows: Optional[int], summary_only: bool) -> Dict[str, Any]:
         """Extract tables using pdfplumber (good for simple tables)"""
-        import pdfplumber
 
         def extract_pdfplumber():
             extracted_tables = []

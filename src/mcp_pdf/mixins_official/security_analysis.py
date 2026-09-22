@@ -3,16 +3,12 @@ Security Analysis Mixin - PDF security analysis and watermark detection
 Uses official fastmcp.contrib.mcp_mixin pattern
 """
 
-import asyncio
 import time
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 import logging
 
 # PDF processing libraries
 import fitz  # PyMuPDF
-from PIL import Image
-import io
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool

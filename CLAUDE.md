@@ -103,7 +103,7 @@ uv publish
 
    Response carries `success`, `is_xfa` and `xfa_type` on **every** outcome including failure, so `result["is_xfa"]` never raises `KeyError` precisely when the call failed. On success it splits fields into **four** buckets, not three: `shared` (cross-form `Global_Info-*` canonical vocabulary), `positional` (opaque codes like `p01tf022`), `other` (the default bucket, which holds the majority on any non-zipForm producer, so caller branching must handle it), and `plumbing_fields_dropped` (producer internals). `categories` gives the counts. `canonical_collisions` reports distinct XFA names that canonicalize to one key, which matters because the canonical name is the cross-form join key. Every field carries `original` as the round-trip key; `canonical_name` appears only on shared fields. `exclGroup` maps to `radio`, and any unmapped UI type maps to `unknown` rather than guessing `text`. `canonical_separator` selects `_` / `.` / `-`. `include_design_time_bbox=True` adds best-effort geometry, page-relative with a **top-left** origin (the opposite convention to `extract_form_data`'s bottom-up coordinates) and not authoritative for dynamic XFA since subforms reflow at render time. Limits are env-tunable: `MCP_PDF_MAX_XFA_TEMPLATE_BYTES`, `MCP_PDF_MAX_XFA_DEPTH`, `MCP_PDF_MAX_XFA_INLINE_FIELDS`.
 10. **Document Assembly**: `merge_pdfs`, `split_pdf_by_pages`, `reorder_pdf_pages` - PDF manipulation and organization
-11. **Annotations & Markup**: `add_sticky_notes`, `add_highlights`, `add_stamps`, `add_video_notes`, `extract_all_annotations` - Collaboration and multimedia review tools
+11. **Annotations & Markup**: `add_sticky_notes`, `add_highlights`, `add_stamps`, `extract_all_annotations` - Collaboration and review tools
 12. **Structure Detection**: `detect_structure`, `split_pdf_by_structure`, `batch_extract` - Chapter-aware document analysis and extraction. `detect_structure` finds headings via bookmarks, font-size heuristics, and numbering patterns. Writes full structure to a JSON file by default, returns compact summary + path (~1k tokens vs ~20k inline). Set `inline=True` for full data in response. `split_pdf_by_structure` auto-splits into per-chapter directories with markdown + images. `batch_extract` processes user-specified page ranges in a single call (replaces 24+ individual tool calls).
 
 ### MCP Client-Friendly Design
@@ -270,41 +270,6 @@ The server provides comprehensive document organization capabilities:
 - Support for page duplication and omission
 - Automatic bookmark reference adjustment
 - Detailed tracking of page transformations
-
-### PDF Video Annotations
-
-The server provides innovative multimedia annotation capabilities:
-
-**Video Sticky Notes (`add_video_notes`)**:
-- Embed video files directly into PDF as attachments
-- Create visual sticky notes with play button icons
-- Click-to-launch functionality using JavaScript actions
-- Smart format validation with FFmpeg conversion suggestions
-- Supports multiple video formats (.mp4, .mov, .avi, .mkv, .webm)
-- Automatic file size optimization recommendations
-- Color-coded video notes with customizable sizes
-- Self-contained multimedia PDFs with no external dependencies
-
-**Technical Implementation:**
-- Videos embedded as PDF file attachments with unique identifiers
-- Screen annotations with JavaScript `exportDataObject` commands
-- Compatible with Adobe Acrobat/Reader JavaScript security model
-- Automatic video extraction and system player launch
-- Visual indicators include play icons and video titles
-
-**Format Optimization:**
-- Intelligent format validation and compatibility checking
-- Automatic FFmpeg conversion suggestions for unsupported formats
-- File size warnings and compression recommendations for large videos
-- Optimal settings: MP4 with H.264/AAC codec for maximum compatibility
-- Example conversions provided for easy command-line optimization
-
-**Use Cases:**
-- Technical documentation with embedded demo videos
-- Training materials with interactive multimedia content
-- Inspection reports with video evidence
-- Collaborative reviews with video explanations
-- Educational content with supplementary video materials
 
 ### Docker Support
 The project includes Docker support with all system dependencies pre-installed, useful for consistent cross-platform development and deployment.

@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, BinaryIO, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import logging
 
 # PDF processing libraries (always available)
@@ -31,6 +31,20 @@ from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
 from ..security import validate_pdf_path, validate_output_path, sanitize_error_message
 
 logger = logging.getLogger(__name__)
+
+# reportlab is an optional dependency, imported lazily at call time via
+# _get_reportlab(). But three helpers below annotate a parameter as
+# `canvas.Canvas`, and without this block `canvas` is not a module-level name,
+# so the annotation references something that does not exist. It survives today
+# only because `from __future__ import annotations` (line 12) makes annotations
+# lazy strings and because those helpers are private, so nothing introspects
+# them. It would become a real NameError the moment anything calls
+# typing.get_type_hints() on them or promotes one to an @mcp_tool, since
+# FastMCP reads signatures to build its JSON schemas.
+#
+# TYPE_CHECKING was already imported for exactly this purpose and never used.
+if TYPE_CHECKING:
+    from reportlab.pdfgen import canvas
 
 # Lazy import for reportlab (optional dependency)
 _reportlab_available = None

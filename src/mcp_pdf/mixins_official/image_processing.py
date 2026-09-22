@@ -857,8 +857,8 @@ class ImageProcessingMixin(MCPMixin):
         Drawings contain: rect, items (path operations), color, fill, width, etc.
         """
         svg_parts = [
-            f'<?xml version="1.0" encoding="UTF-8"?>',
-            f'<svg xmlns="http://www.w3.org/2000/svg" ',
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<svg xmlns="http://www.w3.org/2000/svg" ',
             f'viewBox="0 0 {width:.2f} {height:.2f}" ',
             f'width="{width:.2f}" height="{height:.2f}">',
             '',
