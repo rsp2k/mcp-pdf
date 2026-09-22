@@ -4,10 +4,9 @@ Uses official fastmcp.contrib.mcp_mixin pattern
 """
 
 import asyncio
+import functools
 import time
-import tempfile
 import json
-from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
 
@@ -49,21 +48,36 @@ class FormManagementMixin(MCPMixin):
         """
         start_time = time.time()
 
+        # Bound before the try: the except handler reads it, and an exception
+        # from validate_pdf_path would otherwise make this an UnboundLocalError
+        # that masks the real error.
+        xfa_detection_failed = False
+
         try:
             path = await validate_pdf_path(pdf_path)
 
-            # XFA early-detect — dynamic XFA forms have no AcroForm widgets,
-            # so we'd return total_fields=0 and the user would think the form
-            # is empty. Surface the real diagnosis + a pointer to the right tool.
+            # XFA early-detect. Dynamic XFA forms have no AcroForm widgets, so
+            # without this we'd report total_fields=0 and the caller would
+            # conclude the form is empty. Give the real diagnosis plus a
+            # pointer to the tool that can actually read it.
+            #
+            # Detection has three outcomes, and the third one matters: if we
+            # could not read the file at all, we must not treat that as "not
+            # XFA". We still try fitz (MuPDF recovers from damage pypdf will
+            # not), but we carry the detection failure forward so the error
+            # path can say the file looks damaged rather than emitting a bare
+            # "document closed".
             xfa_info = _detect_xfa(str(path))
-            if xfa_info["is_xfa"] and xfa_info["xfa_type"] == "dynamic":
+            xfa_detection_failed = bool(xfa_info.get("detection_failed"))
+
+            if xfa_info.get("is_xfa") and xfa_info.get("xfa_type") == "dynamic":
                 return {
                     "success": False,
                     "is_xfa": True,
                     "xfa_type": "dynamic",
                     "error": (
-                        "Dynamic XFA form — fields are not in AcroForm and "
-                        "cannot be extracted by this tool."
+                        "Dynamic XFA form: fields live in the XFA template, "
+                        "not in AcroForm, so this tool cannot reach them."
                     ),
                     "hint": (
                         "Use extract_xfa_fields to get the XFA field schema "
@@ -89,6 +103,7 @@ class FormManagementMixin(MCPMixin):
                             "page": page_num + 1,
                             "field_name": widget.field_name or f"field_{total_fields + 1}",
                             "field_type": self._get_field_type(widget),
+                            "field_type_raw": self._get_raw_field_type(widget),
                             "field_value": widget.field_value or "",
                             "field_label": widget.field_label or "",
                             "is_required": getattr(widget, 'field_flags', 0) & 2 != 0,  # Required flag
@@ -150,11 +165,22 @@ class FormManagementMixin(MCPMixin):
         except Exception as e:
             error_msg = sanitize_error_message(str(e))
             logger.error(f"Form data extraction failed: {error_msg}")
-            return {
+            response = {
                 "success": False,
                 "error": error_msg,
                 "extraction_time": round(time.time() - start_time, 2)
             }
+            if xfa_detection_failed:
+                # Both readers failed on this file. Saying so is far more
+                # actionable than the bare "document closed" a damaged or
+                # truncated form package used to produce.
+                response["hint"] = (
+                    "Neither pypdf nor MuPDF could read this file's structure. "
+                    "It is likely truncated or corrupt rather than simply "
+                    "form-less. Try repair_pdf, or re-download the original."
+                )
+                response["xfa_detection_failed"] = True
+            return response
 
     @mcp_tool(
         name="fill_form_pdf",
@@ -428,13 +454,21 @@ class FormManagementMixin(MCPMixin):
     def _get_field_type(self, widget) -> str:
         """Map PyMuPDF widget type to the portable cross-tool vocabulary.
 
-        Aligned with the XFA tool (extract_xfa_fields) so callers see the same
-        six core terms regardless of which form system the PDF uses:
-        text / checkbox / radio / dropdown / date / signature, plus
-        button / unknown for edge cases. Notably, listbox + combobox both
-        collapse to "dropdown" — the distinction is widget-hover behavior, not
-        semantic field type, and callers asking "is this a dropdown?" don't
-        care which one it is.
+        Aligned with extract_xfa_fields so callers see the same terms
+        regardless of which form system the PDF uses: text / checkbox / radio
+        / dropdown / date / signature, plus button / unknown for the edges.
+
+        listbox and combobox both map to "dropdown" because that is the term
+        the XFA side produces for its single `choiceList` widget, so one
+        vocabulary needs one word for "pick from a list". The two are NOT
+        interchangeable though: a combobox may allow free-text entry and a
+        listbox may allow multi-select, and both of those change how a caller
+        has to fill the field. Use `_get_raw_field_type` when that matters;
+        `extract_form_data` reports it as `field_type_raw` on every field.
+
+        Note that `date` is currently unreachable from this side, because
+        PyMuPDF exposes no date widget type. AcroForm date fields arrive as
+        text with a format action attached.
         """
         field_type = getattr(widget, 'field_type', 0)
 
@@ -456,15 +490,45 @@ class FormManagementMixin(MCPMixin):
         else:
             return "unknown"
 
+    def _get_raw_field_type(self, widget) -> str:
+        """The unmerged AcroForm widget type.
+
+        Preserves the distinctions the portable vocabulary deliberately
+        collapses, so nothing is destroyed by the alignment. Currently that
+        means listbox vs combobox, which differ on free-text entry and
+        multi-select.
+        """
+        field_type = getattr(widget, 'field_type', 0)
+
+        if field_type == fitz.PDF_WIDGET_TYPE_BUTTON:
+            return "button"
+        elif field_type == fitz.PDF_WIDGET_TYPE_CHECKBOX:
+            return "checkbox"
+        elif field_type == fitz.PDF_WIDGET_TYPE_RADIOBUTTON:
+            return "radio"
+        elif field_type == fitz.PDF_WIDGET_TYPE_TEXT:
+            return "text"
+        elif field_type == fitz.PDF_WIDGET_TYPE_LISTBOX:
+            return "listbox"
+        elif field_type == fitz.PDF_WIDGET_TYPE_COMBOBOX:
+            return "combobox"
+        elif field_type == fitz.PDF_WIDGET_TYPE_SIGNATURE:
+            return "signature"
+        else:
+            return "unknown"
+
     @mcp_tool(
         name="is_xfa_pdf",
         description=(
             "Detect whether a PDF is XFA (Adobe LiveCycle / dynamic forms) "
-            "and whether it's dynamic or static. Dynamic XFA forms can't be "
-            "rendered by any open-source PDF library — only Adobe's runtime "
+            "and whether it is dynamic or static. Dynamic XFA forms cannot be "
+            "rendered by any open-source PDF library; only Adobe's runtime "
             "executes them. Use this to branch BEFORE calling extract_form_data "
             "or convert_to_images on a PDF that might be dynamic XFA. Returns "
-            "{is_xfa, xfa_type: 'dynamic'|'static'|None, has_acroform}."
+            "{success, is_xfa, xfa_type: 'dynamic'|'static'|None, has_acroform, "
+            "detection_failed}. IMPORTANT: check detection_failed first. When "
+            "it is true, is_xfa is null (not false) because the file could not "
+            "be read at all, which is a different fact from 'no XFA here'."
         )
     )
     async def is_xfa_pdf(self, pdf_path: str) -> Dict[str, Any]:
@@ -474,22 +538,34 @@ class FormManagementMixin(MCPMixin):
             pdf_path: Path to PDF file or HTTPS URL.
 
         Returns:
-            Dict with is_xfa (bool), xfa_type ("dynamic" / "static" / None),
-            and has_acroform (bool).
+            Dict with success, is_xfa (True / False / None), xfa_type
+            ("dynamic" / "static" / None), has_acroform, detection_failed and
+            reason.
+
+            ``is_xfa`` is None exactly when ``detection_failed`` is True. A
+            truncated or corrupt PDF lands there rather than being reported as
+            a confident "not XFA", which would send the caller down the
+            AcroForm path to a cryptic failure.
         """
         start_time = time.time()
         try:
             path = await validate_pdf_path(pdf_path)
-            result = _detect_xfa(str(path))
+            # pypdf parses the whole file in-memory, so keep it off the loop.
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, _detect_xfa, str(path))
+            result["success"] = not result.get("detection_failed", False)
             result["detection_time"] = round(time.time() - start_time, 2)
             return result
         except Exception as e:
             error_msg = sanitize_error_message(str(e))
             logger.error(f"XFA detection failed: {error_msg}")
             return {
-                "is_xfa": False,
+                "success": False,
+                "is_xfa": None,
                 "xfa_type": None,
-                "has_acroform": False,
+                "has_acroform": None,
+                "detection_failed": True,
+                "reason": error_msg,
                 "error": error_msg,
                 "detection_time": round(time.time() - start_time, 2),
             }
@@ -503,8 +579,12 @@ class FormManagementMixin(MCPMixin):
             "producer profile by default; pass profile='generic' for forms from "
             "other producers and supply extra_plumbing_patterns / "
             "extra_positional_patterns. Returns shared (canonical) + positional "
-            "+ plumbing-dropped field breakdown. The `original` XFA name is on "
-            "every field — that's the round-trip key for actually filling the form."
+            "+ other + plumbing-dropped field breakdown. NOTE four categories, "
+            "not three: 'other' is the default bucket for names matching "
+            "neither the shared prefix nor a positional pattern, and on a "
+            "non-zipForm producer it usually holds most of the fields. The "
+            "`original` XFA name is on every field and is the round-trip key "
+            "for actually filling the form."
         )
     )
     async def extract_xfa_fields(
@@ -516,51 +596,77 @@ class FormManagementMixin(MCPMixin):
         extra_positional_patterns: Optional[List[str]] = None,
         canonical_separator: str = "_",
         include_design_time_bbox: bool = False,
+        max_inline_fields: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Extract the XFA field schema from a dynamic-XFA PDF.
 
         Args:
             pdf_path: Path to PDF file or HTTPS URL.
-            profile: Producer profile — "zipform" (Lone Wolf / zipForm Plus
-                conventions) or "generic" (only the Global_Info- shared-prefix
-                convention; callers add producer-specific patterns themselves).
-            extra_plumbing_exact: Additional exact field names to drop as plumbing.
+            profile: Producer profile, matched case-insensitively. Either
+                "zipform" (Lone Wolf / zipForm Plus conventions) or "generic"
+                (only the Global_Info- shared-prefix convention; callers add
+                producer-specific patterns themselves). An unrecognized value
+                is an error, not a silent fallback to generic.
+            extra_plumbing_exact: Additional exact field names to drop as
+                plumbing. Compared case-insensitively.
             extra_plumbing_patterns: Regex patterns (strings) for additional
-                plumbing fields. Matched case-insensitively.
+                plumbing fields. Matched case-insensitively as a SUBSTRING
+                search, so they need no anchoring.
             extra_positional_patterns: Regex patterns (strings) identifying
-                additional opaque positional codes.
-            canonical_separator: Separator for canonical names — "_" (snake,
-                default), "." (dotted), "-" (kebab).
+                additional opaque positional codes. Matched case-insensitively
+                and ANCHORED AT THE START, so `tf\\d+$` will not match
+                `p01tf001` but `^p\\d+tf\\d+$` will.
+            canonical_separator: Separator for canonical names. "_" (snake,
+                default), "." (dotted), or "-" (kebab).
             include_design_time_bbox: Include best-effort design-time geometry
-                on every field. NOT authoritative for dynamic XFA — coordinates
-                reflow at Adobe render time. Useful as a hint, not a source of
-                truth.
+                on every field. NOT authoritative for dynamic XFA, whose
+                subforms reflow at render time. Geometry is page-relative with
+                a top-left origin, the opposite convention to
+                extract_form_data's bottom-up coordinates.
+            max_inline_fields: Cap on fields serialized into the response
+                (default 5000, or MCP_PDF_MAX_XFA_INLINE_FIELDS). Counts in
+                `categories` and `shared_fields` always cover every field.
 
         Returns:
-            Dict matching the response shape in
-            docs/agent-threads/xfa-form-support/004-*.md — is_xfa, xfa_type,
-            xfa_parts, field_count, fields (with original on every entry,
-            canonical_name only on shared), shared_fields, plumbing_fields_dropped,
-            profile_used, warnings.
+            Dict always carrying success, is_xfa and xfa_type, so a caller can
+            read those keys on any outcome including failure. On success also
+            xfa_parts (in file order), field_count, fields, categories,
+            shared_fields, canonical_collisions, plumbing_fields_dropped,
+            profile_used and warnings. See extract_xfa_schema's docstring for
+            the full shape.
         """
         start_time = time.time()
         try:
             path = await validate_pdf_path(pdf_path)
-            result = extract_xfa_schema(
-                str(path),
-                profile=profile,
-                extra_plumbing_exact=extra_plumbing_exact,
-                extra_plumbing_patterns=extra_plumbing_patterns,
-                extra_positional_patterns=extra_positional_patterns,
-                canonical_separator=canonical_separator,
-                include_design_time_bbox=include_design_time_bbox,
+            # pypdf + ElementTree are both blocking and can run for seconds on
+            # a large template. Offload so one big form cannot stall the
+            # server for every other request, matching create_form_pdf.
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                functools.partial(
+                    extract_xfa_schema,
+                    str(path),
+                    profile=profile,
+                    extra_plumbing_exact=extra_plumbing_exact,
+                    extra_plumbing_patterns=extra_plumbing_patterns,
+                    extra_positional_patterns=extra_positional_patterns,
+                    canonical_separator=canonical_separator,
+                    include_design_time_bbox=include_design_time_bbox,
+                    max_inline_fields=max_inline_fields,
+                ),
             )
             result["extraction_time"] = round(time.time() - start_time, 2)
             return result
         except Exception as e:
             error_msg = sanitize_error_message(str(e))
             logger.error(f"XFA field extraction failed: {error_msg}")
+            # Carry the contract keys even here. Without them a caller doing
+            # result["is_xfa"] gets a KeyError precisely when the call failed.
             return {
+                "success": False,
+                "is_xfa": None,
+                "xfa_type": None,
                 "error": error_msg,
                 "extraction_time": round(time.time() - start_time, 2),
             }

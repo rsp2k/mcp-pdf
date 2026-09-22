@@ -3,16 +3,12 @@ Document Analysis Mixin - PDF metadata, structure, and health analysis
 Uses official fastmcp.contrib.mcp_mixin pattern
 """
 
-import asyncio
 import time
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 import logging
 
 # PDF processing libraries
 import fitz  # PyMuPDF
-from PIL import Image
-import io
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -383,11 +379,30 @@ class DocumentAnalysisMixin(MCPMixin):
             else:
                 health_status = "Poor"
 
-            # Detect XFA — surface up-front since dynamic XFA changes what
-            # other tools (extract_form_data, convert_to_images, ocr_pdf) can
-            # actually deliver.
-            xfa_info = _detect_xfa(str(path))
-            if xfa_info["is_xfa"] and xfa_info["xfa_type"] == "dynamic":
+            # Detect XFA, because dynamic XFA changes what other tools
+            # (extract_form_data, convert_to_images, ocr_pdf) can deliver.
+            #
+            # Guarded locally and on purpose. This is an incidental probe
+            # bolted onto an analysis that has already completed by this
+            # point, so it must not be able to throw away a successful result:
+            # pypdf can fail on files MuPDF reads fine (encryption revisions,
+            # for one), and without this guard that failure would turn a good
+            # analysis into success: False.
+            try:
+                xfa_info = _detect_xfa(str(path))
+            except Exception as e:
+                logger.warning(f"XFA probe failed, continuing: {e}")
+                xfa_info = {
+                    "is_xfa": None, "xfa_type": None, "detection_failed": True,
+                }
+
+            if xfa_info.get("detection_failed"):
+                warnings.append(
+                    "Could not determine whether this is an XFA form; pypdf "
+                    "could not read the file structure even though MuPDF "
+                    "could. That asymmetry often means the file is damaged."
+                )
+            elif xfa_info.get("is_xfa") and xfa_info.get("xfa_type") == "dynamic":
                 warnings.append(
                     "Dynamic XFA form detected. Most tools will only see the "
                     "Adobe placeholder page; use extract_xfa_fields for the "
@@ -411,8 +426,9 @@ class DocumentAnalysisMixin(MCPMixin):
                     "file_size_mb": round(file_size_mb, 2),
                     "pdf_version": pdf_version,
                     "is_encrypted": is_encrypted,
-                    "is_xfa": xfa_info["is_xfa"],
-                    "xfa_type": xfa_info["xfa_type"],
+                    "is_xfa": xfa_info.get("is_xfa"),
+                    "xfa_type": xfa_info.get("xfa_type"),
+                    "xfa_detection_failed": xfa_info.get("detection_failed", False),
                     "sample_pages_analyzed": sample_pages,
                     "estimated_text_density": round(avg_text_per_page, 1)
                 },

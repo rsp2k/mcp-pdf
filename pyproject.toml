@@ -1,8 +1,8 @@
 [project]
 name = "mcp-pdf"
-version = "2.3.0"
+version = "2.3.1"
 description = "Secure FastMCP server for comprehensive PDF processing - text extraction, OCR, table extraction, forms, annotations, and more"
-authors = [{name = "Ryan Malloy", email = "ryan@malloys.us"}]
+authors = [{name = "Ryan Malloy", email = "ryan@supported.systems"}]
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -137,16 +137,6 @@ asyncio_mode = "auto"
 addopts = "-v --tb=short"
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
-
-[tool.hatchling.build.targets.sdist]
-include = [
-    "/src",
-    "/tests",
-    "/examples", 
-    "README.md",
-    "LICENSE",
-    "MANIFEST.in",
-]
 
 [dependency-groups]
 dev = [

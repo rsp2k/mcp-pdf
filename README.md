@@ -126,10 +126,14 @@ Real-estate forms, mortgage forms, government forms — many are **dynamic XFA**
 
 | Tool | What it does |
 |------|-------------|
-| `is_xfa_pdf` | Detect XFA + classify as dynamic / static. Use for branching before extract_form_data or convert_to_images |
-| `extract_xfa_fields` | Parse the XFA template for field names, captions, UI types. Splits into shared (cross-form canonical), positional (opaque codes), and plumbing (producer internals, dropped) |
+| `is_xfa_pdf` | Detect XFA and classify as dynamic / static. Use for branching before extract_form_data or convert_to_images |
+| `extract_xfa_fields` | Parse the XFA template for field names, captions, UI types. Splits into shared (cross-form canonical), positional (opaque codes), other, and plumbing (producer internals, dropped) |
 
-`extract_xfa_fields` defaults to the **zipForm producer profile** (Lone Wolf / zipForm Plus — the most common XFA producer in the wild). Pass `profile="generic"` plus `extra_plumbing_patterns` / `extra_positional_patterns` for other producers. The `original` XFA name appears on every field as the round-trip key for filling. `canonical_name` appears only on shared fields. `canonical_separator` chooses `_` (snake, default) / `.` (dotted) / `-` (kebab). `include_design_time_bbox=True` opts into best-effort geometry — not authoritative for dynamic XFA (subforms reflow at render time).
+**Check `detection_failed` before trusting `is_xfa`.** Detection has three outcomes: `True` with an `xfa_type`, `False` for a readable non-XFA PDF, and `None` with `detection_failed=True` when the file could not be read. A truncated or corrupt form package lands in the third case and gets told so, rather than being reported as a file that simply has no XFA.
+
+`extract_xfa_fields` defaults to the **zipForm producer profile** (Lone Wolf / zipForm Plus, the most common XFA producer in the wild), matched case-insensitively. Pass `profile="generic"` plus `extra_plumbing_patterns` / `extra_positional_patterns` for other producers; an unrecognized profile name is an error rather than a silent fallback. Plumbing patterns are substring searches while positional patterns are anchored at the start.
+
+Every response carries `success`, `is_xfa` and `xfa_type`, including failures. Fields land in four categories, not three: `shared`, `positional`, `other` (the default bucket, which holds the majority on non-zipForm producers) and `plumbing_fields_dropped`. `canonical_collisions` flags distinct XFA names that canonicalize to the same key, which matters because that key is the cross-form join. The `original` XFA name is on every field as the round-trip key for filling; `canonical_name` appears only on shared fields. `canonical_separator` chooses `_` (snake, default), `.` (dotted) or `-` (kebab). `include_design_time_bbox=True` opts into best-effort geometry, page-relative with a top-left origin, and not authoritative for dynamic XFA since subforms reflow at render time.
 
 ### Permit Forms (Coordinate-Based)
 

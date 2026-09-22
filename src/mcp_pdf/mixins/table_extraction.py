@@ -63,13 +63,18 @@ class TableExtractionMixin(MCPMixin):
         """
         start_time = time.time()
 
+        # Bound before the try. The except handler returns methods_tried, so
+        # any exception raised before its assignment (validate_pdf_path on a
+        # missing file, for one) turned the real error into an
+        # UnboundLocalError that masked it.
+        methods_tried: list = []
+
         try:
             # Validate inputs using centralized security functions
             path = await validate_pdf_path(pdf_path)
             parsed_pages = parse_pages_parameter(pages)
 
             all_tables = []
-            methods_tried = []
 
             # Auto method: try methods in order until we find tables
             if method == "auto":

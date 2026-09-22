@@ -154,8 +154,13 @@ The Claude Code session caches the tool list at MCP-server-connect time. After a
 ### `markdown_to_pdf` errors with `mktexfmt: Did not find entry for byfmt=xelatex`
 The host's TeX install is missing format files. Either run `sudo fmtutil-sys --all` to regenerate them, or sidestep by passing `pdf_engine="weasyprint"` (after `pip install weasyprint`) or `pdf_engine="tectonic"`.
 
-### Tests fail with `'FunctionTool' object is not callable`
-Tests under `tests/test_server.py` call the `@mcp_tool`-decorated methods directly, but `@mcp_tool` wraps them. Call the methods via the mixin instance instead — see `tests/test_mixin_architecture.py` for the working pattern.
+### `uv run pytest` aborts at collection with an ImportError
+Fixed in v2.3.1, recorded because the wrong diagnosis was in this file for a while. `tests/test_server.py` imported `validate_pdf_path`, `extract_text` and seven more names from `mcp_pdf.server`. Those were module-level functions before the mixin refactor moved them into `mcp_pdf.mixins_official.*`, leaving `server.py` exporting only `PDFServerOfficial`, `create_server` and `main`. pytest treats a collection ImportError as fatal, so the whole suite aborted and ran zero tests.
+
+The lesson worth keeping: if a test file imports from a module that got refactored, check what the module still exports (`grep -nE '^(def|class) ' src/...`) before assuming the failure is about how the test calls things.
+
+### Calling a `@mcp_tool` method in a test
+Call it on a mixin instance and `asyncio.run` it, as `tests/test_xfa.py` does. The decorator returns the coroutine function, so `asyncio.run(mixin.extract_xfa_fields(path))` works; there is no `.fn` attribute to unwrap.
 
 ### `uv publish` succeeds but PyPI shows old version
 PyPI's package-level JSON cache (`/pypi/<pkg>/json`) lags by a minute or two. The version-specific URL (`/pypi/<pkg>/<ver>/`) updates immediately — use that for verification.

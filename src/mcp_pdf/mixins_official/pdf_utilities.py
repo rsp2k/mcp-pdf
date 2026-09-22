@@ -3,22 +3,17 @@ PDF Utilities Mixin - Additional PDF processing tools
 Uses official fastmcp.contrib.mcp_mixin pattern
 """
 
-import asyncio
 import time
-import json
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import logging
 
 # PDF processing libraries
 import fitz  # PyMuPDF
-from PIL import Image
-import io
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
 
-from ..security import validate_pdf_path, validate_output_path, sanitize_error_message
+from ..security import validate_pdf_path, sanitize_error_message
 from ..xfa import is_xfa_pdf as _detect_xfa
 from .utils import parse_pages_parameter
 
@@ -294,7 +289,7 @@ class PDFUtilitiesMixin(MCPMixin):
                         # Try to get text to verify page integrity
                         page.get_text()
                         readable_pages += 1
-                    except Exception as e:
+                    except Exception:
                         corrupted_pages.append(page_num + 1)
 
                 # If document is readable, save a clean copy
@@ -485,13 +480,22 @@ class PDFUtilitiesMixin(MCPMixin):
         try:
             path = await validate_pdf_path(pdf_path)
 
-            # XFA early-detect — dynamic XFA renders to the Adobe "Open in
+            # XFA early-detect. Dynamic XFA renders to the Adobe "Open in
             # Reader" placeholder page, not the real form. We still produce
-            # the rendered image (caller may want it), but flag what they're
-            # actually getting so they don't trust it as the form layout.
-            xfa_info = _detect_xfa(str(path))
+            # the rendered image (the caller may want it) but flag what they
+            # are actually getting so they do not trust it as the form layout.
+            #
+            # Locally guarded: this probe is incidental to the conversion, so
+            # a pypdf failure on a file MuPDF can render must not abort the
+            # render.
+            try:
+                xfa_info = _detect_xfa(str(path))
+            except Exception as e:
+                logger.warning(f"XFA probe failed, continuing: {e}")
+                xfa_info = {"is_xfa": None, "detection_failed": True}
+
             xfa_warning = None
-            if xfa_info["is_xfa"] and xfa_info["xfa_type"] == "dynamic":
+            if xfa_info.get("is_xfa") and xfa_info.get("xfa_type") == "dynamic":
                 xfa_warning = (
                     "Dynamic XFA form. The rendered image is the Adobe "
                     "placeholder page, NOT the real form layout. Use "
