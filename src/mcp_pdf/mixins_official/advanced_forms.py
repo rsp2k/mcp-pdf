@@ -19,6 +19,34 @@ from ..security import validate_pdf_path, validate_output_path, sanitize_error_m
 logger = logging.getLogger(__name__)
 
 
+def _pdf_export_value(label: str, taken: set) -> str:
+    """Turn a radio option label into a PDF-name-safe export value.
+
+    A PDF name object cannot contain a space, so an on-state built straight
+    from a label like "Conventional Loan" emits the malformed /Conventional
+    Loan and silently breaks that button's appearance dictionary. Escaping to
+    /Conventional#20Loan is valid but reads back through PyMuPDF as the
+    literal "Conventional#20Loan", which every caller would then have to
+    un-escape.
+
+    So map to a readable token instead: keep alphanumerics, dash, underscore
+    and dot, fold everything else to "_", collapse runs, and de-duplicate.
+    The caller never has to guess the result, because add_radio_group returns
+    the label -> export-value mapping.
+    """
+    safe = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in label)
+    while "__" in safe:
+        safe = safe.replace("__", "_")
+    safe = safe.strip("_") or "option"
+    candidate = safe
+    n = 2
+    while candidate in taken or candidate == "Off":
+        candidate = f"{safe}_{n}"
+        n += 1
+    taken.add(candidate)
+    return candidate
+
+
 class AdvancedFormsMixin(MCPMixin):
     """
     Handles advanced PDF form operations including radio groups, textareas, and date fields.
@@ -195,9 +223,16 @@ class AdvancedFormsMixin(MCPMixin):
             "The buttons ARE mutually exclusive: every widget in the group "
             "shares the one field name you pass as group_name, which is what "
             "makes a PDF reader allow only one selection, and each carries a "
-            "distinct on-state named after its option label. So the field's "
-            "value is the chosen label (\"Commercial\"), not a generic "
+            "distinct on-state derived from its option label. So the field's "
+            "value identifies the chosen option rather than a generic "
             "\"Yes\", and \"Off\" means nothing is selected yet.\n"
+            "\n"
+            "A PDF name cannot contain spaces or punctuation, so the export "
+            "value is a sanitised form of the label: \"Conventional Loan\" "
+            "becomes \"Conventional_Loan\". You never have to guess it — "
+            "radio_group_summary.option_values returns the full label -> "
+            "export-value mapping, and that export value is what "
+            "fill_form_pdf expects for group_name.\n"
             "\n"
             "extract_form_data therefore reports one entry PER BUTTON, all "
             "sharing group_name; that is the correct PDF representation of a "
@@ -336,12 +371,16 @@ class AdvancedFormsMixin(MCPMixin):
             # directly. Without this, sharing the field name would make the
             # buttons mutually exclusive but indistinguishable: selecting any
             # of them would just set the field to "Yes".
+            option_values = {}
+            _taken = set()
             for xref, label in button_xrefs:
+                export = _pdf_export_value(label, _taken)
                 try:
                     kind, ap_n = doc.xref_get_key(xref, "AP/N")
                     if kind == "dict" and "/Yes" in ap_n:
-                        doc.xref_set_key(xref, "AP/N", ap_n.replace("/Yes", f"/{label}"))
+                        doc.xref_set_key(xref, "AP/N", ap_n.replace("/Yes", f"/{export}"))
                     doc.xref_set_key(xref, "AS", "/Off")   # start unselected
+                    option_values[label] = export
                 except Exception as exc:
                     logger.warning(
                         "Could not set on-state for radio option %r: %s", label, exc
@@ -356,6 +395,7 @@ class AdvancedFormsMixin(MCPMixin):
                 "success": True,
                 "radio_group_summary": {
                     "group_name": group_name,
+                    "option_values": option_values,
                     "options_requested": len(option_list),
                     "buttons_added": buttons_added,
                     "page": page,

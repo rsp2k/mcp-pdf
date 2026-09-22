@@ -218,10 +218,11 @@ class PDFUtilitiesMixin(MCPMixin):
             "the name or location, and an existing file with that name is "
             "overwritten. The original is left untouched.\n"
             "\n"
-            "All three levels are lossless structural cleanups. NOTHING is "
-            "re-encoded: images are never downsampled and fonts are never "
-            "subsetted, so on a file that is already mostly image data the "
-            "saving can be near zero or even slightly negative. Check "
+            "The three levels are structural cleanups and are lossless on "
+            "their own: they never subset fonts, and they only touch image "
+            "data when preserve_quality is False (see below). On a file that "
+            "is already mostly image data a lossless run therefore saves "
+            "close to nothing, so check "
             "optimization_summary.reduction_percent rather than assuming a "
             "win.\n"
             "  'light'      — drop unused objects, deflate streams\n"
@@ -262,8 +263,9 @@ class PDFUtilitiesMixin(MCPMixin):
             pdf_path: Path to the PDF to optimize, or an HTTPS URL. The
                 output is written alongside it as {stem}_optimized.pdf.
             optimization_level: "light", "balanced" (default) or
-                "aggressive". All are lossless; see the tool description for
-                what each one actually does.
+                "aggressive". Each is a lossless structural cleanup on its
+                own; pair with preserve_quality=False to also recompress
+                images. See the tool description for what each one does.
             preserve_quality: True (default) keeps the whole operation
                 lossless. False additionally recompresses eligible images as
                 JPEG, quality 50 for "aggressive" and 75 otherwise. Skips

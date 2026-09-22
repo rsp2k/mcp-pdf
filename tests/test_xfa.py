@@ -778,3 +778,73 @@ class TestXfaMcpTools:
         assert result["document_stats"]["is_xfa"] is True
         assert result["document_stats"]["xfa_type"] == "dynamic"
         assert any("XFA" in w for w in result["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Radio-group export values
+#
+# Not XFA, but it lives here because it is the same class of defect this file
+# exists to guard: a value that looks fine on a convenient fixture and breaks
+# on a realistic one. The original single-word test labels ("Cash", "Loan",
+# "Other") all passed while multi-word labels silently produced an unusable
+# button, because a PDF name object cannot contain a space.
+# ---------------------------------------------------------------------------
+
+class TestRadioGroupExportValues:
+    LABELS = ["Cash", "Conventional Loan", "FHA / VA", "Seller-Financed",
+              "Other (specify)"]
+
+    def _build(self, tmp_path):
+        import json
+        import pymupdf
+        from mcp_pdf.mixins_official.advanced_forms import AdvancedFormsMixin
+
+        src = tmp_path / "blank.pdf"
+        doc = pymupdf.open()
+        doc.new_page()
+        doc.save(str(src))
+        doc.close()
+
+        out = tmp_path / "radio.pdf"
+        result = asyncio.run(AdvancedFormsMixin().add_radio_group(
+            str(src), str(out), "financing", json.dumps(self.LABELS)
+        ))
+        return result, out
+
+    def test_every_label_produces_a_usable_button(self, tmp_path):
+        """A label with a space used to yield on-state None and value 'Yes'."""
+        import pymupdf
+        result, out = self._build(tmp_path)
+        assert result["success"] is True
+        assert result["radio_group_summary"]["buttons_added"] == len(self.LABELS)
+
+        doc = pymupdf.open(str(out))
+        states = [w.button_states() for w in doc[0].widgets()]
+        doc.close()
+        assert all(s and s.get("normal") for s in states), \
+            "a button has no usable on-state; its /AP/N key is malformed"
+
+    def test_all_buttons_share_one_field_name(self, tmp_path):
+        """Sharing the name is what makes them mutually exclusive."""
+        import pymupdf
+        _, out = self._build(tmp_path)
+        doc = pymupdf.open(str(out))
+        names = {w.field_name for w in doc[0].widgets()}
+        doc.close()
+        assert names == {"financing"}
+
+    def test_export_values_are_distinct_and_pdf_safe(self, tmp_path):
+        """Distinct on-states are what make the selection readable back."""
+        result, _ = self._build(tmp_path)
+        values = result["radio_group_summary"]["option_values"]
+        assert set(values) == set(self.LABELS), "every label needs a mapping"
+        assert len(set(values.values())) == len(self.LABELS), "values must be unique"
+        for export in values.values():
+            assert " " not in export
+            assert all(c.isalnum() or c in "-_." for c in export), export
+
+    def test_mapping_is_reported_so_callers_need_not_guess(self, tmp_path):
+        result, _ = self._build(tmp_path)
+        values = result["radio_group_summary"]["option_values"]
+        assert values["Conventional Loan"] == "Conventional_Loan"
+        assert values["FHA / VA"] == "FHA_VA"
