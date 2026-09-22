@@ -848,3 +848,56 @@ class TestRadioGroupExportValues:
         values = result["radio_group_summary"]["option_values"]
         assert values["Conventional Loan"] == "Conventional_Loan"
         assert values["FHA / VA"] == "FHA_VA"
+
+    def test_filling_selects_exactly_one_button(self, tmp_path):
+        """fill_form_pdf used to turn on EVERY button in the group.
+
+        PyMuPDF's Widget.update() ignores an "Off" assignment on a radio and
+        switches it on with its own state, so assigning the requested value
+        widget-by-widget left all five options selected while reporting
+        fields_filled=5 for a single key.
+        """
+        import json
+        import pymupdf
+        from mcp_pdf.mixins_official.form_management import FormManagementMixin
+
+        _, created = self._build(tmp_path)
+        filled = tmp_path / "filled.pdf"
+        result = asyncio.run(FormManagementMixin().fill_form_pdf(
+            str(created), str(filled), json.dumps({"financing": "Conventional_Loan"})
+        ))
+        assert result["fill_summary"]["fields_filled"] == 1, \
+            "a radio group is one field, not one per button"
+
+        doc = pymupdf.open(str(filled))
+        selected = [
+            w.button_states()["normal"][1]
+            for w in doc[0].widgets()
+            if doc.xref_get_key(w.xref, "AS")[1] != "/Off"
+        ]
+        doc.close()
+        assert selected == ["Conventional_Loan"]
+
+    def test_unknown_option_selects_nothing_and_is_reported(self, tmp_path):
+        """An unmatched value must not silently select something."""
+        import json
+        import pymupdf
+        from mcp_pdf.mixins_official.form_management import FormManagementMixin
+
+        _, created = self._build(tmp_path)
+        filled = tmp_path / "filled_bad.pdf"
+        result = asyncio.run(FormManagementMixin().fill_form_pdf(
+            str(created), str(filled), json.dumps({"financing": "NoSuchOption"})
+        ))
+        # fields_filled stays 0 against total_data_provided 1, which is the
+        # documented way to detect a key that matched nothing.
+        assert result["fill_summary"]["fields_filled"] == 0
+        assert result["fill_summary"]["total_data_provided"] == 1
+
+        doc = pymupdf.open(str(filled))
+        selected = [
+            w for w in doc[0].widgets()
+            if doc.xref_get_key(w.xref, "AS")[1] != "/Off"
+        ]
+        doc.close()
+        assert selected == []

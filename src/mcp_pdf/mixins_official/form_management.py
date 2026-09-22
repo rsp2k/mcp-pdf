@@ -246,6 +246,17 @@ class FormManagementMixin(MCPMixin):
             "on-state string such as \"Yes\" or \"Off\" (JSON true becomes "
             'the useless string "True"), and a number becomes its text form.\n'
             "\n"
+            "A RADIO GROUP is several widgets sharing one field name, so "
+            "give it ONE key whose value is the export value of the option "
+            "to select; the matching button is turned on and the rest are "
+            "forced off. Export values are sanitised from the option labels "
+            "(\"Conventional Loan\" becomes \"Conventional_Loan\"), so take "
+            "them from add_radio_group's option_values or from the "
+            "on-state in extract_form_data rather than passing the label. A "
+            "value matching no option selects nothing and leaves "
+            "fields_filled short of total_data_provided. The group counts as "
+            "ONE filled field, not one per button.\n"
+            "\n"
             "flatten=True does NOT merely lock the fields: it rasterises "
             "every page to an image at 72 DPI and builds a new document from "
             "those pictures. The result has no selectable text, no "
@@ -310,6 +321,9 @@ class FormManagementMixin(MCPMixin):
             doc = pymupdf.open(str(input_pdf_path))
             fields_filled = 0
             fields_failed = 0
+            # Radio groups whose requested option was found, so an unmatched
+            # value can be reported rather than looking like a silent no-op.
+            radio_groups_matched = set()
             failed_fields = []
 
             for page_num in range(len(doc)):
@@ -322,8 +336,47 @@ class FormManagementMixin(MCPMixin):
                         field_name = widget.field_name
                         if field_name and field_name in data:
                             try:
+                                requested = str(data[field_name])
+
+                                # A radio group is several widgets sharing one
+                                # field name, each with its own on-state.
+                                # Assigning the requested value to every one of
+                                # them turns them ALL on, which is what this
+                                # did until 2026-09-22: filling a 5-option
+                                # group reported fields_filled=5 for one key
+                                # and produced a form with every option
+                                # selected. Select the matching button and push
+                                # the rest to "Off".
+                                if widget.field_type == pymupdf.PDF_WIDGET_TYPE_RADIOBUTTON:
+                                    states = widget.button_states() or {}
+                                    normal = states.get("normal") or []
+                                    on_state = next(
+                                        (s for s in normal if s != "Off"), None
+                                    )
+                                    # Write /AS and /V directly instead of
+                                    # going through widget.update(). For a
+                                    # radio button PyMuPDF's updater ignores an
+                                    # "Off" assignment and switches the widget
+                                    # ON with its own state, so the obvious
+                                    # implementation leaves EVERY option in the
+                                    # group selected. /AS chooses which
+                                    # appearance is drawn; /V is the field
+                                    # value and is the same across the group.
+                                    doc.xref_set_key(
+                                        widget.xref, "AS",
+                                        f"/{on_state}" if on_state == requested else "/Off",
+                                    )
+                                    doc.xref_set_key(widget.xref, "V", f"/{requested}")
+                                    # Count the GROUP once, on the button that
+                                    # actually took the value, so fields_filled
+                                    # stays comparable to total_data_provided.
+                                    if on_state == requested:
+                                        fields_filled += 1
+                                        radio_groups_matched.add(field_name)
+                                    continue
+
                                 # Set field value
-                                widget.field_value = str(data[field_name])
+                                widget.field_value = requested
                                 widget.update()
                                 fields_filled += 1
                             except Exception as e:
