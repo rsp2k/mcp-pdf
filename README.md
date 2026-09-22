@@ -6,7 +6,7 @@
 
 **A FastMCP server for PDF processing**
 
-*49 tools for text extraction, OCR, tables, forms, XFA, annotations, markdown↔PDF, and more*
+*52 tools for text extraction, OCR, tables, forms, XFA, annotations, markdown↔PDF, and more*
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square)](https://www.python.org/downloads/)
 [![FastMCP](https://img.shields.io/badge/FastMCP-2.0+-green.svg?style=flat-square)](https://github.com/jlowin/fastmcp)
@@ -117,8 +117,13 @@ uv run python examples/verify_installation.py
 | `fill_form_pdf` | Fill form fields from JSON |
 | `create_form_pdf` | Create new forms with text fields, checkboxes, dropdowns |
 | `add_form_fields` | Add fields to existing PDFs |
+| `add_date_field` | Add a date field with format validation |
+| `add_radio_group` | Add a radio button group with mutual exclusion |
+| `add_textarea_field` | Add a multi-line text area with word limits |
+| `add_field_validation` | Add validation rules to existing form fields |
+| `validate_form_data` | Check data against field rules and constraints before filling |
 
-Field types are reported in a **portable six-term vocabulary** (`text/checkbox/radio/dropdown/date/signature` + `button/unknown`) shared between AcroForm and XFA tools, so callers don't have to learn two models.
+Field types are reported in a **portable vocabulary** (`text/checkbox/radio/dropdown/date/signature` plus `button/unknown`) shared between the AcroForm and XFA tools, so callers don't have to learn two models. `extract_form_data` also returns `field_type_raw` with the unmerged AcroForm widget type, since `listbox` and `combobox` both report as `dropdown` but differ on free-text entry and multi-select.
 
 ### XFA Forms (Dynamic Adobe LiveCycle)
 
@@ -154,9 +159,50 @@ For scanned PDFs or forms without interactive fields. Draws text at (x, y) coord
 | Tool | What it does |
 |------|-------------|
 | `merge_pdfs` | Combine multiple PDFs with bookmark preservation |
+| `merge_pdfs_advanced` | Merge with page numbering, generated TOC, and per-file page ranges |
+| `split_pdf` | Split into separate documents |
 | `split_pdf_by_pages` | Split by page ranges |
 | `split_pdf_by_bookmarks` | Split at chapter/section boundaries |
 | `reorder_pdf_pages` | Rearrange pages in custom order |
+| `rotate_pages` | Rotate specific pages by 90, 180 or 270 degrees |
+
+### Structure Detection
+
+Chapter-aware analysis, for long documents where you want to work a section at a time instead of paging through blindly.
+
+| Tool | What it does |
+|------|-------------|
+| `detect_structure` | Find headings via bookmarks, font-size heuristics and numbering patterns |
+| `split_pdf_by_structure` | Auto-split into per-chapter directories with markdown and images |
+| `batch_extract` | Process several page ranges in one call, replacing dozens of individual calls |
+
+`detect_structure` writes the full structure to JSON and returns a compact summary plus the path (roughly 1k tokens against ~20k inline). Pass `inline=True` when you want the whole thing in the response.
+
+### Content Analysis
+
+| Tool | What it does |
+|------|-------------|
+| `classify_content` | Identify document type (invoice, contract, report) and structure |
+| `summarize_content` | Generate a summary and key insights |
+| `extract_charts` | Extract and analyze charts, diagrams and visual elements |
+| `detect_watermarks` | Detect and analyze watermarks |
+
+### PDF Utilities
+
+| Tool | What it does |
+|------|-------------|
+| `convert_to_images` | Render pages to PNG or JPEG at a chosen DPI |
+| `optimize_pdf` | Reduce file size and improve load performance |
+| `repair_pdf` | Attempt recovery of a corrupted or damaged PDF |
+
+### Server Introspection
+
+Not PDF tools, so they sit outside the count above. Useful when you want to know what a given install can actually do.
+
+| Tool | What it does |
+|------|-------------|
+| `list_capabilities` | Enumerate what this server build can do |
+| `server_info` | Report version, registered mixins and configuration |
 
 ### Annotations
 
@@ -315,13 +361,36 @@ The base install stays lean. Heavy or niche dependencies are gated behind extras
 
 ## Configuration
 
-Optional environment variables:
+All optional. Defaults are tuned for local stdio use (Claude Desktop, Claude Code), which is the common case.
 
-| Variable | Purpose |
-|----------|---------|
-| `MCP_PDF_ALLOWED_PATHS` | Colon-separated directories for file output |
-| `PDF_TEMP_DIR` | Temp directory for processing (default: `/tmp/mcp-pdf-processing`) |
-| `TESSDATA_PREFIX` | Tesseract language data location |
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PDF_TEMP_DIR` | `/tmp/mcp-pdf-processing` | Working directory for intermediate files |
+| `MCP_PDF_MAX_SIZE` | *no limit* | Max input PDF size in **MB**. Set `0` or leave unset to disable |
+| `ALLOWED_DOMAINS` | *all* | Comma-separated host allowlist for fetching PDFs over HTTPS |
+| `DEBUG` | `false` | Set `true` for verbose logging |
+| `TESSDATA_PREFIX` | *system* | Tesseract language data location (read by Tesseract, not by this server) |
+
+### Output-path restriction
+
+`MCP_PDF_ALLOWED_PATHS` takes a colon-separated list of directories that tools may write into. **It is not enforced in stdio mode**, which is the default, on the reasoning that a local server writing to the user's own filesystem does not need to be fenced off from it. Enforcement switches on when either of these is set:
+
+| Variable | Effect |
+|----------|--------|
+| `MCP_TRANSPORT=http` | Treat as network-exposed; enforce `MCP_PDF_ALLOWED_PATHS` |
+| `MCP_PUBLIC_MODE` | Any non-empty value does the same |
+
+If you expose this server over HTTP, set both `MCP_TRANSPORT=http` and `MCP_PDF_ALLOWED_PATHS`. Setting the allowlist alone has no effect in stdio mode. And note the framing in [CLAUDE.md](CLAUDE.md): application-level path checks are a speed bump, not a boundary. Real isolation comes from running as an unprivileged user in a container with the filesystem it actually needs and nothing more.
+
+### XFA limits
+
+Bound the XFA parser against hostile or merely enormous templates. expat caps entity amplification relative to input size, so bounding the input is what bounds the expansion.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `MCP_PDF_MAX_XFA_TEMPLATE_BYTES` | `16777216` (16 MB) | Reject XFA templates larger than this |
+| `MCP_PDF_MAX_XFA_DEPTH` | `100` | Max `<subform>` nesting before giving up |
+| `MCP_PDF_MAX_XFA_INLINE_FIELDS` | `5000` | Fields serialized into one response before truncating |
 
 ---
 
