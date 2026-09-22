@@ -65,7 +65,14 @@ class StructureDetectionMixin(MCPMixin):
             "using bookmarks, font-size analysis, and numbering patterns. "
             "By default writes full structure to a JSON file and returns a "
             "compact summary with the file path. Set inline=True to return "
-            "the complete structure in the response (use for small documents)."
+            "the complete structure in the response (use for small documents).\n"
+            "\n"
+            "strategies=\"auto\" (the default) is adaptive: it reads the PDF's "
+            "own bookmarks and only falls back to the font and numbering "
+            "heuristics when there is no usable outline. Pass \"all\" to force "
+            "every detector and merge where they agree, which is slower but "
+            "catches headings a table of contents omits. strategies_used in "
+            "the response names what actually ran."
         ),
         annotations={
             "readOnlyHint": False,       # the default path writes a _structure.json file
@@ -97,13 +104,19 @@ class StructureDetectionMixin(MCPMixin):
                 means every page. Bookmark detection always covers the whole
                 document; this only narrows the font and numbering passes.
             strategies: Which detectors to run, then merge —
-                "auto"      bookmarks + fonts + numbering (the default).
-                "all"       identical to "auto"; no extra detector exists.
+                "auto"      adaptive (the default): run bookmarks first, and
+                            only fall through to fonts + numbering when the
+                            PDF has no usable outline (fewer than 2
+                            bookmarks). A real table of contents beats
+                            anything the heuristics infer, and skipping them
+                            avoids a font histogram and regex sweep.
+                "all"       force every detector and merge their agreement,
+                            even when bookmarks already answered it.
                 "bookmarks" the PDF's own table of contents only.
                 "fonts"     font-size histogram heuristic only.
                 "numbering" built-in Chapter/Part/Section/1.2.3 regexes only.
-                Any other string runs NOTHING and returns an empty structure
-                with success=true, so check total_boundaries.
+                Any other value raises; it used to match no branch, run no
+                detector, and return an empty structure with success=true.
             heading_pattern: Extra user regex applied to page text on top of
                 whichever strategies ran (IGNORECASE | MULTILINE). Every match
                 becomes a level-1 boundary at confidence 0.85. An invalid regex
@@ -161,6 +174,28 @@ class StructureDetectionMixin(MCPMixin):
 
             strategies_lower = strategies.strip().lower()
 
+            _VALID_STRATEGIES = ("auto", "bookmarks", "fonts", "numbering", "all")
+            if strategies_lower not in _VALID_STRATEGIES:
+                # The Literal annotation blocks this over MCP, but a direct
+                # Python caller could still get here, and the old behaviour was
+                # to match no branch, run no detector, and return an empty
+                # structure with success=true.
+                raise ValueError(
+                    f"Unknown strategies value {strategies!r}. "
+                    f"Valid: {', '.join(_VALID_STRATEGIES)}"
+                )
+
+            # "auto" is adaptive; "all" is exhaustive. They used to be the same
+            # tuple membership test, so "auto" ran every detector and the two
+            # were byte-for-byte identical, which made the name a lie and cost
+            # a full font histogram plus a regex sweep on documents whose own
+            # table of contents already answered the question.
+            #
+            # Under "auto" the font and numbering passes now run only when
+            # bookmarks did not yield a usable outline. Ask for "all" to force
+            # every detector and merge their agreement.
+            adaptive = strategies_lower == "auto"
+
             # --- Bookmarks ---
             run_bookmarks = strategies_lower in ("auto", "bookmarks", "all")
             bookmark_detections: List[Dict[str, Any]] = []
@@ -174,8 +209,17 @@ class StructureDetectionMixin(MCPMixin):
                 except Exception as exc:
                     logger.warning("Bookmark detection failed: %s", exc)
 
+            # A bookmark outline with at least two entries is a real table of
+            # contents, authored by whoever made the PDF, and beats anything
+            # the heuristics can infer. One lone bookmark is usually just a
+            # "cover" entry, so it does not count as covered.
+            bookmarks_sufficient = adaptive and bookmarks_found >= 2
+
             # --- Fonts ---
-            run_fonts = strategies_lower in ("auto", "fonts", "all")
+            run_fonts = (
+                strategies_lower in ("auto", "fonts", "all")
+                and not bookmarks_sufficient
+            )
             if run_fonts:
                 try:
                     font_detections, body_info, heading_info = (
@@ -190,7 +234,10 @@ class StructureDetectionMixin(MCPMixin):
                     logger.warning("Font-based detection failed: %s", exc)
 
             # --- Numbering / built-in patterns ---
-            run_numbering = strategies_lower in ("auto", "numbering", "all")
+            run_numbering = (
+                strategies_lower in ("auto", "numbering", "all")
+                and not bookmarks_sufficient
+            )
             if run_numbering:
                 try:
                     numbering_detections = self._detect_by_numbering(
@@ -1032,7 +1079,9 @@ class StructureDetectionMixin(MCPMixin):
             no pdf/markdown switch. A successful entry carries name, pages,
             output_directory, pdf_path and the nested markdown_result; a failed
             one carries "success": false and "error". The top-level "success" is
-            true whenever the batch ran at all, EVEN IF every section failed, so
+            true when at least one section produced output; compare
+            sections_succeeded against sections_failed, and read "warning" when
+            it is present, since a partial batch still reports success. So
             inspect the per-section entries.
         """
         start_time = time.time()
@@ -1137,12 +1186,34 @@ class StructureDetectionMixin(MCPMixin):
 
             source_doc.close()
 
-            return {
-                "success": True,
+            # Report per-section outcomes at the top level. This used to be a
+            # hardcoded success=True, so a batch in which EVERY section failed
+            # still reported success with sections_processed equal to the
+            # number attempted; a caller checking only the top-level flag
+            # concluded the whole job had worked.
+            #
+            # A section dict carries "success": false only when it failed, so
+            # a missing key means it succeeded.
+            failed = [r for r in results if r.get("success") is False]
+            succeeded = len(results) - len(failed)
+
+            response = {
+                # True when at least one section produced output. Partial
+                # success is still success, but check the counts.
+                "success": succeeded > 0,
                 "sections_processed": len(results),
+                "sections_succeeded": succeeded,
+                "sections_failed": len(failed),
                 "sections": results,
                 "batch_time": round(time.time() - start_time, 2),
             }
+            if failed:
+                response["warning"] = (
+                    f"{len(failed)} of {len(results)} sections failed. "
+                    f"Inspect the per-section 'error' fields; the remaining "
+                    f"{succeeded} produced output."
+                )
+            return response
 
         except Exception as e:
             error_msg = sanitize_error_message(str(e))
