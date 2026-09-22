@@ -50,7 +50,12 @@ class FormManagementMixin(MCPMixin):
             "corner in PDF points from the page's BOTTOM-left origin, the "
             "opposite convention to extract_xfa_fields' design-time boxes. "
             "`choices` and `max_length` appear only when the widget defines "
-            "them.\n"
+            "them. Radio and checkbox widgets also carry `on_state`, the "
+            "export value that SELECTS that option, and `is_selected`. This "
+            "is how you discover valid values for a form you did not create: "
+            "every button in a radio group shares one field_name and reports "
+            "field_value \"Off\", so on_state is the only thing that tells "
+            "them apart, and it is exactly what fill_form_pdf wants.\n"
             "\n"
             "DYNAMIC XFA forms return success=false with is_xfa=true, "
             "xfa_type=\"dynamic\" and a hint pointing at extract_xfa_fields, "
@@ -77,7 +82,9 @@ class FormManagementMixin(MCPMixin):
             readonly_fields, field_types histogram, has_form) and form_fields,
             each entry carrying page, field_name, field_type, field_type_raw,
             field_value, field_label, is_required, is_readonly, coordinates
-            and, when present, choices and max_length.
+            and, when present, choices and max_length. Radio and checkbox
+            entries add on_state (the export value that selects them) and
+            is_selected.
 
             On a dynamic XFA form: success=false plus is_xfa, xfa_type and a
             hint naming extract_xfa_fields.
@@ -157,6 +164,34 @@ class FormManagementMixin(MCPMixin):
                                 "height": round(widget.rect.height, 2)
                             }
                         }
+
+                        # Expose the on-state of button widgets. Without it
+                        # a caller who did not create the PDF has no way to
+                        # discover what value selects a given radio option:
+                        # every widget in a group reports the same field_name
+                        # and a field_value of "Off", and the export value
+                        # lives only in the appearance dictionary. fill_form_pdf
+                        # needs exactly this string.
+                        if widget.field_type in (
+                            pymupdf.PDF_WIDGET_TYPE_RADIOBUTTON,
+                            pymupdf.PDF_WIDGET_TYPE_CHECKBOX,
+                        ):
+                            try:
+                                states = widget.button_states() or {}
+                                normal = states.get("normal") or []
+                                on_state = next(
+                                    (st for st in normal if st != "Off"), None
+                                )
+                                if on_state:
+                                    field_info["on_state"] = on_state
+                                    field_info["is_selected"] = (
+                                        widget.field_value == on_state
+                                    )
+                            except Exception as exc:
+                                logger.debug(
+                                    "No button states for %s: %s",
+                                    field_info["field_name"], exc
+                                )
 
                         # Add field-specific properties
                         if hasattr(widget, 'choice_values') and widget.choice_values:

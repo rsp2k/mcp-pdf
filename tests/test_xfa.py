@@ -901,3 +901,24 @@ class TestRadioGroupExportValues:
         ]
         doc.close()
         assert selected == []
+
+    def test_extract_form_data_exposes_the_on_state(self, tmp_path):
+        """A caller who did not create the PDF must be able to discover the
+        valid values. Every button in a group reports the same field_name and
+        a field_value of "Off", so without on_state there is nothing to tell
+        them apart and no way to know what fill_form_pdf will accept.
+        """
+        from mcp_pdf.mixins_official.form_management import FormManagementMixin
+
+        result, created = self._build(tmp_path)
+        extracted = asyncio.run(
+            FormManagementMixin().extract_form_data(str(created))
+        )
+        assert extracted["success"] is True
+
+        on_states = [f.get("on_state") for f in extracted["form_fields"]]
+        assert all(on_states), "every radio widget needs an on_state"
+        # The discovered states must match what add_radio_group reported, or
+        # the two tools disagree about the same document.
+        assert set(on_states) == set(result["radio_group_summary"]["option_values"].values())
+        assert all(f.get("is_selected") is False for f in extracted["form_fields"])
