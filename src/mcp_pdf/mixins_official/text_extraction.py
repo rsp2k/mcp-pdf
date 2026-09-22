@@ -6,7 +6,7 @@ Uses official fastmcp.contrib.mcp_mixin pattern
 import time
 import tempfile
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List, Literal, Optional
 import logging
 
 # PDF processing libraries
@@ -39,14 +39,24 @@ class TextExtractionMixin(MCPMixin):
             "Extract text from PDF and write to a .txt file. Returns the output "
             "file path and a short preview — full text is in the file, not in the "
             "response. Use output_directory to control where the file is saved, "
-            "or set inline=True to get full text in the response instead."
-        )
+            "or set inline=True to get full text in the response instead.\n"
+            "\n"
+            "Leave `method` at \"auto\" (which uses PyMuPDF). In the current "
+            "build the other three values are not wired up: they return EMPTY "
+            "text with success=true, writing a zero-byte file."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a .txt file unless inline=True
+            "destructiveHint": True,     # overwrites <stem>.txt in output_directory
+            "idempotentHint": True,      # same args produce the same file
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def extract_text(
         self,
         pdf_path: str,
         pages: Optional[str] = None,
-        method: str = "auto",
+        method: Literal["auto", "pymupdf", "pdfplumber", "pypdf"] = "auto",
         preserve_layout: bool = False,
         output_directory: Optional[str] = None,
         inline: bool = False,
@@ -61,9 +71,12 @@ class TextExtractionMixin(MCPMixin):
         context window. Set inline=True for the old behavior (full text in response).
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
-            pages: Page numbers to extract (comma-separated, 1-based), None for all
-            method: Extraction method ("auto", "pymupdf", "pdfplumber", "pypdf")
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
+            pages: 1-based page selection, e.g. "5", "1,3,5", "1-10",
+                "1,3-5,12-20". None (the default) extracts every page.
+            method: Keep "auto" (PyMuPDF). "pymupdf", "pdfplumber" and "pypdf"
+                are declared but not implemented: each returns empty text with
+                success=true and writes a zero-byte file.
             preserve_layout: Whether to preserve text layout and formatting
             output_directory: Directory to save the text file (default: temp directory)
             inline: Return full text in response instead of writing to file
@@ -196,10 +209,45 @@ class TextExtractionMixin(MCPMixin):
     @mcp_tool(
         name="ocr_pdf",
         description=(
-            "Perform OCR on scanned PDFs. By default writes extracted text "
-            "to a .txt file and returns the path with a short preview. "
-            "Set inline=True to return full OCR text in the response."
-        )
+            "Read text off the PIXELS of a scanned PDF: renders each page to an "
+            "image and runs Tesseract on it. Writes the recognised text to "
+            "'<stem>_ocr.txt' in output_directory (a fresh temp directory when "
+            "you do not give one) and returns that path plus a ~500-character "
+            "preview and per-page confidence. Set inline=True to get the full "
+            "text and per-page results in the response and NO file.\n"
+            "\n"
+            "Only use this when the page has no text layer. Run is_scanned_pdf "
+            "first: if the PDF already has real text, extract_text is faster by "
+            "orders of magnitude and exact, while OCR invents plausible "
+            "misreadings. This is the slow tool in the set — every page is "
+            "rasterised at `dpi` and passed through Tesseract, so budget "
+            "roughly a second or more per page and pass `pages` rather than "
+            "OCRing a long document to see one page.\n"
+            "\n"
+            "`pages` is a 1-based string: \"5\", \"1,3,5\", \"1-10\", or mixed "
+            "\"1,3-5,12-20\". Omit for every page. `languages` is a LIST of "
+            "Tesseract codes, e.g. [\"eng\"] or [\"eng\", \"spa\"]; each one "
+            "needs its tesseract-ocr-<lang> data pack installed on the host or "
+            "the call fails. `dpi` 300 is the sweet spot; 150 is faster and "
+            "loses small type, 600 is slower and rarely better. `preprocess` "
+            "just converts to greyscale in this build.\n"
+            "\n"
+            "Pages that fail are recorded individually and the call still "
+            "returns success=true, so compare ocr_summary.pages_successful "
+            "against pages_processed rather than trusting success. "
+            "overall_confidence is Tesseract's mean word confidence on a 0-100 "
+            "scale; below about 70 the text needs a human's eyes, and 0 means "
+            "confidence could not be measured. A dynamic XFA form will OCR "
+            "nothing but Adobe's \"please upgrade your reader\" placeholder — "
+            "check analyze_pdf_health or is_xfa_pdf if the output looks like "
+            "that."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a .txt file unless inline=True
+            "destructiveHint": True,     # overwrites <stem>_ocr.txt in output_directory
+            "idempotentHint": True,      # Tesseract is deterministic for fixed args
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def ocr_pdf(
         self,
@@ -215,19 +263,28 @@ class TextExtractionMixin(MCPMixin):
         Perform OCR on scanned PDF pages.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
-            pages: Page numbers to process (comma-separated, 1-based), None for all
-            languages: List of language codes for OCR
-            dpi: DPI for image rendering
-            preprocess: Whether to preprocess images for better OCR
-            output_directory: Directory for the OCR text file.
-                Defaults to a temp directory.
-            inline: If True, return full OCR text in the response.
-                Default: False (write to file, return path + preview).
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
+            pages: 1-based page selection, e.g. "5", "1,3,5", "1-10",
+                "1,3-5,12-20". None (the default) processes every page.
+            languages: Tesseract language codes, joined with "+" internally.
+                Each needs its language data installed on the host.
+            dpi: Render resolution before OCR. 300 is a good default; lower
+                is faster and loses small type, higher is slower.
+            preprocess: Convert the rendered page to greyscale first.
+            output_directory: Where to write "<stem>_ocr.txt". Overwritten if
+                it already exists. Defaults to a fresh temp directory.
+            inline: If True, return full OCR text plus per-page results in the
+                response and write no file. Default False.
 
         Returns:
-            Dictionary containing OCR file path and summary, or full text
-            if inline=True
+            File mode (default): success, output_file, text_preview, and
+            ocr_summary with word_count, character_count, pages_processed,
+            pages_successful, pages_failed and overall_confidence (0-100).
+            Inline mode: success, text, pages_processed, pages_successful,
+            overall_confidence and page_results — one entry per page with
+            page, text, confidence, word_count, character_count, and an
+            "error" key on the pages that failed. Inline mode returns no
+            output_file and no ocr_summary.
         """
         start_time = time.time()
 
@@ -366,17 +423,55 @@ class TextExtractionMixin(MCPMixin):
 
     @mcp_tool(
         name="is_scanned_pdf",
-        description="Detect if a PDF is scanned/image-based rather than text-based"
+        description=(
+            "Decide whether a PDF is page images with no text layer (scanned) "
+            "or real selectable text. Read-only and cheap, writes nothing. Call "
+            "it before extract_text or ocr_pdf so you pick the right one: "
+            "is_scanned true means extract_text will come back empty and you "
+            "want ocr_pdf; false means extract_text is exact and OCR would only "
+            "add errors.\n"
+            "\n"
+            "Samples the FIRST 5 PAGES only, so a document that is text up "
+            "front and scanned appendices later reads as not scanned. A page "
+            "counts as textless when it yields 10 characters or fewer. The "
+            "verdict is true when more than 60% of sampled pages are textless "
+            "OR more than 40% carry a \"large\" image.\n"
+            "\n"
+            "Two numbers not to take at face value. image_coverage_percent "
+            "divides image PIXEL area by page area in POINTS, so it is not a "
+            "percentage of the page and routinely exceeds 100 — which also "
+            "makes large_image_present fire for any ordinary embedded photo. "
+            "And `confidence` is confidence that the file IS scanned, not "
+            "confidence in the verdict: 0.9 very likely scanned, 0.7 likely, "
+            "0.6 possibly, 0.2 likely text-based. Because the two are computed "
+            "separately, is_scanned can come back true alongside confidence "
+            "0.2; when they disagree, believe the text figures in "
+            "analysis_summary over either one."
+        ),
+        annotations={
+            "readOnlyHint": True,        # opens the PDF, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def is_scanned_pdf(self, pdf_path: str) -> Dict[str, Any]:
         """
         Detect if a PDF contains scanned content vs native text.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
 
         Returns:
-            Dictionary containing scan detection results
+            Dict with success plus:
+              - is_scanned: the verdict
+              - confidence: 0.2-0.9, how likely it is scanned (see description)
+              - analysis_summary: pages_analyzed, pages_with_minimal_text,
+                pages_with_large_images, total_pages
+              - page_analysis.text_analysis: per page, text_length and has_text
+              - page_analysis.image_analysis: per page, image_count,
+                image_coverage_percent (pixels over points, not a real
+                percentage) and large_image_present
+              - recommendations: one line naming OCR or standard extraction
         """
         start_time = time.time()
 

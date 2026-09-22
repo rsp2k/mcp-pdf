@@ -104,7 +104,29 @@ class PDFServerOfficial:
     def _register_server_tools(self):
         """Register server-level management tools"""
 
-        @self.mcp.tool(name="server_info", description="Get comprehensive server information")
+        @self.mcp.tool(
+            name="server_info",
+            description=(
+                "Report this PDF server's own identity and runtime configuration: "
+                "package version (CalVer, YYYY.MM.DD), how many tool mixins loaded "
+                "successfully, the one-line summary of each, and the three settings "
+                "read from the environment — max PDF size, the temp/cache directory "
+                "(PDF_TEMP_DIR) and whether DEBUG logging is on.\n"
+                "\n"
+                "Useful for version-pinning a bug report, checking where temp files "
+                "are going, and spotting a mixin that failed to import: a missing "
+                "entry in the mixins list means its tools are not registered at all. "
+                "Note max_pdf_size_mb is reported as 0 when MCP_PDF_MAX_SIZE is unset "
+                "or 0, which means NO limit rather than a zero-byte limit.\n"
+                "\n"
+                "Takes no arguments, touches no files, and tells you nothing about a "
+                "PDF — use list_capabilities for the tool inventory."
+            ),
+            annotations={
+                "readOnlyHint": True,        # pure introspection, no filesystem access
+                "idempotentHint": True,      # constant for the life of the process
+            },
+        )
         async def get_server_info() -> Dict[str, Any]:
             """Get detailed server information including mixins and configuration"""
             return {
@@ -127,7 +149,37 @@ class PDFServerOfficial:
                 }
             }
 
-        @self.mcp.tool(name="list_capabilities", description="List all available PDF processing capabilities")
+        @self.mcp.tool(
+            name="list_capabilities",
+            description=(
+                "Return a hand-maintained map of capability area -> representative "
+                "tool names, as a quick orientation to what this server covers: text "
+                "extraction and OCR, tables, document analysis, forms, assembly, "
+                "annotations, image/markdown conversion and structure detection.\n"
+                "\n"
+                "READ THIS BEFORE RELYING ON IT. The map is a STATIC literal, not "
+                "introspection of what is registered, and it is out of date in two "
+                "ways:\n"
+                "  1. It covers 8 areas while 14 mixins load, omitting advanced form "
+                "fields, security analysis, content analysis, PDF utilities, misc "
+                "tools and permit forms, and it omits individual tools inside the "
+                "areas it does list.\n"
+                "  2. The names are bare. Live tools are registered with their "
+                "mixin's prefix, so 'extract_text' is called as "
+                "'textextraction_extract_text' and 'detect_structure' as "
+                "'structuredetection_detect_structure'. Calling a name from this "
+                "list verbatim will fail.\n"
+                "\n"
+                "So use it to decide which AREA to look in, then take the real name "
+                "and its schema from your own tool list, which is authoritative. "
+                "mixins_loaded in the response is live and will disagree with the "
+                "number of areas listed. Takes no arguments and reads no files."
+            ),
+            annotations={
+                "readOnlyHint": True,        # returns a static map, no filesystem access
+                "idempotentHint": True,      # constant for the life of the process
+            },
+        )
         async def list_capabilities() -> Dict[str, Any]:
             """List all available tools and their capabilities"""
             return {

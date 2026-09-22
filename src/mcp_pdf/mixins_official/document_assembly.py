@@ -5,7 +5,7 @@ Uses official fastmcp.contrib.mcp_mixin pattern
 
 import time
 import json
-from typing import Dict, Any
+from typing import Dict, Any, Literal
 import logging
 
 # PDF processing libraries
@@ -30,7 +30,32 @@ class DocumentAssemblyMixin(MCPMixin):
 
     @mcp_tool(
         name="merge_pdfs",
-        description="Merge multiple PDFs into one document"
+        description=(
+            "Concatenate two or more PDFs end-to-end into one NEW PDF at "
+            "output_path. This is the plain merge: it copies pages in the "
+            "order given and DISCARDS every bookmark/outline from the "
+            "sources. Use merge_pdfs_advanced instead when you need the "
+            "source bookmarks carried into the result (it rewrites their "
+            "page numbers and prefixes each title with its source "
+            "filename) or a generated contents page.\n"
+            "\n"
+            "`pdf_paths` is a JSON array of path strings, in the order you "
+            "want them concatenated:\n"
+            '  ["/docs/cover.pdf", "/docs/body.pdf", "/docs/appendix.pdf"]\n'
+            "\n"
+            "AT LEAST TWO paths are required; a single-element array is "
+            "rejected. Each entry may be a local path or an HTTPS URL. A "
+            "source that fails to OPEN aborts the whole call; a source that "
+            "opens but fails to copy is skipped with the call still "
+            "reporting success, so check merge_summary.total_pages_merged "
+            "against the pages you expected."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,      # same inputs produce the same output file
+            "openWorldHint": True,       # entries in pdf_paths may be HTTPS URLs
+        },
     )
     async def merge_pdfs(
         self,
@@ -41,11 +66,17 @@ class DocumentAssemblyMixin(MCPMixin):
         Merge multiple PDF files into a single document.
 
         Args:
-            pdf_paths: JSON string containing list of PDF file paths
-            output_path: Path where merged PDF will be saved
+            pdf_paths: JSON array of PDF paths (local paths or HTTPS URLs) in
+                concatenation order. Minimum of 2 entries.
+                Example: ["/tmp/a.pdf", "/tmp/b.pdf"]
+            output_path: Where to write the merged PDF. Overwritten if it
+                already exists; the sources are never modified.
 
         Returns:
-            Dictionary containing merge results
+            Dict with success, merge_summary (input_files,
+            total_pages_merged, output size), per-input file_info, and the
+            output path. Bookmarks are NOT preserved; use
+            merge_pdfs_advanced for that.
         """
         start_time = time.time()
 
@@ -144,22 +175,69 @@ class DocumentAssemblyMixin(MCPMixin):
 
     @mcp_tool(
         name="split_pdf",
-        description="Split PDF into separate documents"
+        description=(
+            "Split a PDF into several new PDFs with ZERO configuration. It "
+            "takes no output location and no range list: the pieces are "
+            "written NEXT TO THE INPUT FILE, in the input's own directory, "
+            "using names derived from the input's filename. Reach for this "
+            "only when the built-in behaviour is exactly what you want; "
+            "every other splitting need has a better-targeted tool.\n"
+            "\n"
+            "split_method picks one of three fixed behaviours:\n"
+            "  'pages'     (default) — one file per page:\n"
+            "                {stem}_page_1.pdf, {stem}_page_2.pdf, ...\n"
+            "  'bookmarks' — one file per TOP-LEVEL (level 1) bookmark:\n"
+            "                {stem}_{Bookmark Title}.pdf. FAILS with an "
+            "error if the PDF has no bookmarks.\n"
+            "  'ranges'    — FIXED 10-page chunks, NOT a list you supply:\n"
+            "                {stem}_pages_1-10.pdf, {stem}_pages_11-20.pdf, "
+            "...\n"
+            "\n"
+            "Choose a different tool when:\n"
+            "  - you want YOUR OWN page ranges, or output in a chosen "
+            "directory, or control over filenames -> split_pdf_by_pages\n"
+            "  - you want bookmark splitting at a level other than 1, or a "
+            "chosen output directory -> split_pdf_by_bookmarks\n"
+            "  - the PDF has NO bookmarks but does have visible headings, or "
+            "you want markdown/images per chapter -> split_pdf_by_structure\n"
+            "  - you want to keep only some pages, or reorder/duplicate them "
+            "into ONE file -> reorder_pdf_pages\n"
+            "\n"
+            "The PDF must have MORE THAN ONE page or the call fails. If "
+            "pdf_path is an HTTPS URL the outputs land beside the downloaded "
+            "copy in the temp cache directory, not in any directory of "
+            "yours, so prefer a local path here."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes one new PDF per piece
+            "destructiveHint": True,     # clobbers same-named files beside the input
+            "idempotentHint": True,      # same input + method rewrites the same set
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def split_pdf(
         self,
         pdf_path: str,
-        split_method: str = "pages"
+        split_method: Literal["pages", "bookmarks", "ranges"] = "pages"
     ) -> Dict[str, Any]:
         """
         Split PDF document into separate files.
 
         Args:
-            pdf_path: Path to PDF file to split
-            split_method: Method to use ("pages", "bookmarks", "ranges")
+            pdf_path: Path to the PDF to split, or an HTTPS URL. Must have
+                more than 1 page. Output files are written to this file's
+                parent directory.
+            split_method: Which fixed strategy to use.
+                - "pages": one file per page, {stem}_page_N.pdf
+                - "bookmarks": one file per level-1 bookmark,
+                  {stem}_{title}.pdf; errors if the PDF has no TOC
+                - "ranges": consecutive 10-page chunks (the chunk size is
+                  hard-coded, not a parameter), {stem}_pages_A-B.pdf
 
         Returns:
-            Dictionary containing split results
+            Dict with success, split_summary (method, input_pages,
+            output_files, total size), and split_files listing each written
+            file's path, page count and page_range.
         """
         start_time = time.time()
 
@@ -297,7 +375,35 @@ class DocumentAssemblyMixin(MCPMixin):
 
     @mcp_tool(
         name="reorder_pdf_pages",
-        description="Reorder pages in PDF document"
+        description=(
+            "Rebuild a PDF's pages in an order you specify, writing ONE new "
+            "PDF to output_path. The output contains exactly the pages you "
+            "list, in the order you list them, so this single tool also "
+            "covers three jobs that sound like other tools:\n"
+            "  - EXTRACT a subset: list only the pages you want to keep\n"
+            "  - DUPLICATE a page: list it more than once\n"
+            "  - DELETE pages: leave them out of the list\n"
+            "Unlike the split_* tools it never produces multiple files; use "
+            "split_pdf_by_pages when you want several separate PDFs.\n"
+            "\n"
+            "`page_order` is a JSON array of 1-BASED page numbers:\n"
+            '  [3, 1, 2]        -> a 3-page doc with page 3 first\n'
+            '  [1, 1, 5]        -> page 1 twice, then page 5 (3 pages out)\n'
+            '  [2, 3]           -> keeps only pages 2 and 3\n'
+            "\n"
+            "Every listed page must exist. A number below 1, above the page "
+            "count, or not parseable as an integer fails the WHOLE call with "
+            "no file written and the offending values echoed back, so "
+            "nothing is written from a partly-bad list. The response's "
+            "page_mapping reports pages_duplicated and pages_omitted so you "
+            "can confirm you got the document you meant."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,      # same args produce the same output file
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def reorder_pdf_pages(
         self,
@@ -309,12 +415,18 @@ class DocumentAssemblyMixin(MCPMixin):
         Reorder pages in a PDF document according to specified order.
 
         Args:
-            pdf_path: Path to input PDF file
-            page_order: JSON string with new page order (1-based page numbers)
-            output_path: Path where reordered PDF will be saved
+            pdf_path: Path to the source PDF, or an HTTPS URL to fetch.
+            page_order: JSON array of 1-based page numbers giving the output
+                order. Repeats duplicate a page; omissions drop it. Any
+                out-of-range or non-numeric entry aborts the call.
+                Example: [3, 1, 2]
+            output_path: Where to write the reordered PDF. Overwritten if it
+                exists; the source is never modified in place.
 
         Returns:
-            Dictionary containing reorder results
+            Dict with success, reorder_summary (input/output page counts,
+            output size), page_mapping (new_order, pages_duplicated,
+            pages_omitted), and the output path.
         """
         start_time = time.time()
 

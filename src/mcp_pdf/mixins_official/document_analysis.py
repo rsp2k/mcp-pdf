@@ -30,17 +30,56 @@ class DocumentAnalysisMixin(MCPMixin):
 
     @mcp_tool(
         name="extract_metadata",
-        description="Extract comprehensive PDF metadata"
+        description=(
+            "Read the document information dictionary (title, author, subject, "
+            "keywords, creator, producer, creation/modification dates, trapped) "
+            "plus page count, file size, permission flags and rough content "
+            "estimates. Read-only: writes nothing.\n"
+            "\n"
+            "Pick between the three document-level analysers by what you want:\n"
+            "  extract_metadata     — the factual header fields and page count. "
+            "Start here when you need the title/author/date or just how many "
+            "pages the file has.\n"
+            "  analyze_pdf_health   — is this file usable? Returns a 0-100 score, "
+            "issues, warnings, recommendations, plus XFA detection.\n"
+            "  analyze_pdf_security — how locked-down is it? Encryption, the full "
+            "permission bitmask, JavaScript and metadata-disclosure warnings.\n"
+            "\n"
+            "Caveats worth knowing before you trust the numbers: everything under "
+            "`content_analysis` (estimated_text_characters, estimated_total_images, "
+            "estimated_total_links) is EXTRAPOLATED from the first 5 pages, not "
+            "counted — use extract_images or extract_links for real counts. "
+            "`is_encrypted` is really \"needs a password to open\", so an "
+            "owner-password-only file reads as False. `is_linearized` is always "
+            "False and `pdf_version` is always the string \"Unknown\" in the "
+            "current build; ignore both."
+        ),
+        annotations={
+            "readOnlyHint": True,        # opens the PDF, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def extract_metadata(self, pdf_path: str) -> Dict[str, Any]:
         """
         Extract comprehensive metadata from PDF document.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
 
         Returns:
-            Dictionary containing document metadata
+            Dict with success plus:
+              - metadata: title, author, subject, keywords, creator, producer,
+                creation_date, modification_date, trapped. Absent fields come
+                back as "" rather than being omitted.
+              - document_info: page_count, file_size_bytes, file_size_mb,
+                is_encrypted (needs a password to open), is_linearized
+                (always False, see description), pdf_version (always
+                "Unknown", see description).
+              - content_analysis: estimated_text_characters,
+                estimated_total_images, estimated_total_links — all
+                extrapolated from sample_pages_analyzed (first 5 pages).
+              - permissions: printing, copying, modification, annotation booleans.
         """
         start_time = time.time()
 
@@ -144,17 +183,53 @@ class DocumentAnalysisMixin(MCPMixin):
 
     @mcp_tool(
         name="get_document_structure",
-        description="Extract document structure and outline"
+        description=(
+            "Cheap structural overview of a PDF: does it have a bookmark "
+            "outline, how deep, are all pages the same size, which way are they "
+            "rotated, does it contain form fields. Read-only, no file written, "
+            "one pass over the pages.\n"
+            "\n"
+            "This is the shallow one. Choose between the three structure tools:\n"
+            "  get_document_structure — the PDF's OWN embedded outline plus page "
+            "geometry. Nothing is inferred. Fast, and returns only a TRUNCATED "
+            "TEXT PREVIEW of the bookmarks (first 20 indented titles); the "
+            "per-bookmark page numbers are NOT in the response.\n"
+            "  detect_structure       — infers chapters/sections even when there "
+            "are no bookmarks, using font-size analysis and numbering patterns, "
+            "and writes the full hierarchy to JSON. Use it when you need real "
+            "section boundaries and page ranges to act on.\n"
+            "  analyze_layout         — within-page geometry (text blocks, "
+            "columns, coverage), not document-level sectioning.\n"
+            "\n"
+            "Caveat: has_forms is decided by looking at the FIRST 5 PAGES ONLY, "
+            "so a form whose fields start on page 6 reports has_forms=false. "
+            "unique_page_sizes comes back as a list of [width, height] pairs in "
+            "PDF points."
+        ),
+        annotations={
+            "readOnlyHint": True,        # opens the PDF, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def get_document_structure(self, pdf_path: str) -> Dict[str, Any]:
         """
         Extract document structure including bookmarks, outline, and page organization.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
 
         Returns:
-            Dictionary containing document structure information
+            Dict with success plus:
+              - structure_summary: total_pages, has_bookmarks, bookmark_count,
+                bookmark_hierarchy_depth (deepest outline level, 0 if none),
+                estimated_sections (bookmarks at level 1 or 2),
+                has_uniform_page_sizes, unique_page_sizes (list of
+                [width, height] point pairs), has_forms (first 5 pages only).
+              - bookmark_preview: up to 20 indented title strings, then a
+                "... and N more bookmarks" line. Titles only — no page
+                numbers, and no way to page past the first 20. Use
+                detect_structure when you need the whole outline.
         """
         start_time = time.time()
 
@@ -262,17 +337,60 @@ class DocumentAnalysisMixin(MCPMixin):
 
     @mcp_tool(
         name="analyze_pdf_health",
-        description="Comprehensive PDF health analysis"
+        description=(
+            "Triage a PDF before you spend time on it: can its pages be read, "
+            "is it password protected, is it a dynamic XFA form, is it so "
+            "text-poor that it probably needs OCR. Returns a 0-100 "
+            "health_score with separate issues / warnings / recommendations "
+            "lists. Read-only, writes nothing.\n"
+            "\n"
+            "Run this FIRST when a PDF misbehaves; the XFA warning in "
+            "particular explains why extract_form_data or ocr_pdf would "
+            "otherwise return an almost-empty Adobe placeholder page. Use "
+            "extract_metadata instead for plain header fields, and "
+            "analyze_pdf_security for encryption and permission detail — "
+            "health is about usability, security is about lockdown.\n"
+            "\n"
+            "How to read health_score: it starts at 100 and loses 20 per entry "
+            "in `issues` and 5 per entry in `warnings`, floored at 0. "
+            "health_status is Excellent >=90, Good >=70, Fair >=50, else Poor. "
+            "The score is therefore a count of complaints, not a measurement — "
+            "read the `issues` and `warnings` strings themselves.\n"
+            "\n"
+            "Sampling limits: page-read errors are probed on the first 10 pages "
+            "only, and blank-page / text-density figures come from the first 5. "
+            "estimated_text_density is mean characters per sampled page; below "
+            "100 it recommends OCR. pdf_version is always \"Unknown\" in the "
+            "current build, so the old-version warning never fires."
+        ),
+        annotations={
+            "readOnlyHint": True,        # opens the PDF, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def analyze_pdf_health(self, pdf_path: str) -> Dict[str, Any]:
         """
         Perform comprehensive health analysis of PDF document.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
 
         Returns:
-            Dictionary containing health analysis results
+            Dict with success plus:
+              - health_score (0-100) and health_status
+                (Excellent/Good/Fair/Poor)
+              - summary: total_issues, total_warnings, total_recommendations
+              - issues: human-readable strings for hard problems (unreadable
+                pages, password protection)
+              - warnings: softer findings (large file, >500 pages, blank pages
+                in the sample, low text density, XFA)
+              - recommendations: suggested next actions, e.g. "Consider OCR
+                for text extraction"
+              - document_stats: total_pages, file_size_mb, pdf_version
+                (always "Unknown"), is_encrypted, is_xfa, xfa_type
+                ("dynamic"/"static"/None), xfa_detection_failed,
+                sample_pages_analyzed, estimated_text_density
         """
         start_time = time.time()
 

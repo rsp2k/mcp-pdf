@@ -4,7 +4,7 @@ Uses official fastmcp.contrib.mcp_mixin pattern
 """
 
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Literal, Optional
 import logging
 
 # PDF processing libraries
@@ -31,24 +31,62 @@ class PDFUtilitiesMixin(MCPMixin):
 
     @mcp_tool(
         name="compare_pdfs",
-        description="Compare two PDFs for differences in text, structure, and metadata"
+        description=(
+            "Report whether two PDFs differ, and roughly how much, across "
+            "page count, file size, text, metadata and bookmarks. "
+            "Read-only: nothing is written and neither file is modified.\n"
+            "\n"
+            "This is a SAMENESS CHECK, NOT A DIFF. It never tells you WHAT "
+            "changed in the text and never produces a marked-up document. "
+            "Two limits matter before you trust the number:\n"
+            "  - text is read from AT MOST THE FIRST 10 PAGES of each file "
+            "(fewer if either is shorter), so a change on page 11 is "
+            "invisible;\n"
+            "  - similarity_score compares the two texts position by "
+            "position, so inserting or deleting a few words near the "
+            "start shifts everything after it and can drive the score "
+            "toward 0.0 even for near-identical documents.\n"
+            "Treat a score of 1.0 / documents_identical as meaningful, and "
+            "any lower score as 'differs, magnitude unreliable'. To see the "
+            "actual differences, extract_text from both and compare the text "
+            "yourself.\n"
+            "\n"
+            "comparison_type selects which sections are computed: 'text', "
+            "'metadata' (title/author/producer/dates), 'structure' "
+            "(bookmark outline), or 'all' (the default, runs all three). "
+            "Page count and file size are always reported. overall_similarity "
+            "is the mean of whichever sections ran, where metadata and "
+            "structure each contribute a flat 1.0 or 0.0."
+        ),
+        annotations={
+            "readOnlyHint": True,        # reads both files, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # either path may be an HTTPS URL
+        },
     )
     async def compare_pdfs(
         self,
         pdf_path1: str,
         pdf_path2: str,
-        comparison_type: str = "all"
+        comparison_type: Literal["text", "structure", "metadata", "all"] = "all"
     ) -> Dict[str, Any]:
         """
         Compare two PDF files for differences.
 
         Args:
-            pdf_path1: Path to first PDF file
-            pdf_path2: Path to second PDF file
-            comparison_type: Type of comparison ("text", "structure", "metadata", "all")
+            pdf_path1: Path to the first PDF, or an HTTPS URL to fetch.
+            pdf_path2: Path to the second PDF, or an HTTPS URL to fetch.
+            comparison_type: Which comparisons to run.
+                - "text": first 10 pages only, positional similarity score
+                - "metadata": document info dictionary differences
+                - "structure": bookmark/TOC equality and counts
+                - "all": all three (default)
 
         Returns:
-            Dictionary containing comparison results
+            Dict with success, comparison_summary (overall_similarity,
+            documents_identical), basic_comparison (page counts, file
+            sizes), and whichever of text_comparison /
+            metadata_comparison / structure_comparison were requested.
         """
         start_time = time.time()
 
@@ -172,24 +210,62 @@ class PDFUtilitiesMixin(MCPMixin):
 
     @mcp_tool(
         name="optimize_pdf",
-        description="Optimize PDF file size and performance"
+        description=(
+            "Rewrite a PDF more compactly by garbage-collecting unused "
+            "objects and deflating streams. Writes a NEW file named "
+            "{original_stem}_optimized.pdf IN THE SAME DIRECTORY as the "
+            "input; there is no output-path parameter, so you cannot choose "
+            "the name or location, and an existing file with that name is "
+            "overwritten. The original is left untouched.\n"
+            "\n"
+            "All three levels are lossless structural cleanups. NOTHING is "
+            "re-encoded: images are never downsampled and fonts are never "
+            "subsetted, so on a file that is already mostly image data the "
+            "saving can be near zero or even slightly negative. Check "
+            "optimization_summary.reduction_percent rather than assuming a "
+            "win.\n"
+            "  'light'      — drop unused objects, deflate streams\n"
+            "  'balanced'   — (default) the above plus clean/rebuild the "
+            "content streams\n"
+            "  'aggressive' — the most thorough object collection plus "
+            "clean; still lossless, still no image recompression\n"
+            "\n"
+            "preserve_quality is accepted for backward compatibility and "
+            "currently has NO effect at any level (no level is lossy), so "
+            "leave it alone. To actually shrink a scan, rasterize with "
+            "convert_to_images at a lower dpi instead. Use repair_pdf, not "
+            "this, when the goal is to fix a damaged file."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes {stem}_optimized.pdf
+            "destructiveHint": True,     # clobbers {stem}_optimized.pdf beside the input
+            "idempotentHint": True,      # re-running rewrites the same output
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def optimize_pdf(
         self,
         pdf_path: str,
-        optimization_level: str = "balanced",
+        optimization_level: Literal["light", "balanced", "aggressive"] = "balanced",
         preserve_quality: bool = True
     ) -> Dict[str, Any]:
         """
         Optimize PDF file for smaller size and better performance.
 
         Args:
-            pdf_path: Path to PDF file to optimize
-            optimization_level: Level of optimization ("light", "balanced", "aggressive")
-            preserve_quality: Whether to preserve visual quality
+            pdf_path: Path to the PDF to optimize, or an HTTPS URL. The
+                output is written alongside it as {stem}_optimized.pdf.
+            optimization_level: "light", "balanced" (default) or
+                "aggressive". All are lossless; see the tool description for
+                what each one actually does.
+            preserve_quality: Ignored. Retained for signature compatibility;
+                no level re-encodes image data, so there is no quality
+                trade-off to control.
 
         Returns:
-            Dictionary containing optimization results
+            Dict with success, optimization_summary (original and optimized
+            sizes, size_reduction_bytes, reduction_percent, level used) and
+            output_info with the optimized_path.
         """
         start_time = time.time()
 
@@ -254,17 +330,49 @@ class PDFUtilitiesMixin(MCPMixin):
 
     @mcp_tool(
         name="repair_pdf",
-        description="Attempt to repair corrupted or damaged PDF files"
+        description=(
+            "Salvage a damaged PDF by opening it, testing every page, and "
+            "rewriting the readable ones into a clean file named "
+            "{original_stem}_repaired.pdf IN THE SAME DIRECTORY as the "
+            "input. There is no output-path parameter, and an existing file "
+            "with that name is overwritten. The original is left untouched. "
+            "Pages that cannot be read are dropped, and their 1-based "
+            "numbers are listed in corrupted_page_numbers, so the repaired "
+            "file may have FEWER pages than the original.\n"
+            "\n"
+            "Two hard limits on what it can rescue:\n"
+            "  - the file must still start with a valid %PDF- header, or it "
+            "is rejected before repair is even attempted;\n"
+            "  - the document must still be openable. If the parser cannot "
+            "open it at all the call returns success=false with "
+            "repair_summary.repair_successful=false and writes nothing.\n"
+            "So this fixes structural damage in a file that mostly still "
+            "works; it cannot reconstruct a truncated or header-less file. "
+            "Run analyze_pdf_health first if you only want to know whether "
+            "a file is damaged. Use optimize_pdf, not this, when the file "
+            "is fine and you just want it smaller."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes {stem}_repaired.pdf
+            "destructiveHint": True,     # clobbers {stem}_repaired.pdf beside the input
+            "idempotentHint": True,      # re-running rewrites the same output
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def repair_pdf(self, pdf_path: str) -> Dict[str, Any]:
         """
         Attempt to repair a corrupted or damaged PDF file.
 
         Args:
-            pdf_path: Path to PDF file to repair
+            pdf_path: Path to the damaged PDF, or an HTTPS URL. The repaired
+                copy is written alongside it as {stem}_repaired.pdf. The file
+                must have a valid %PDF- header and must still be openable.
 
         Returns:
-            Dictionary containing repair results
+            Dict with success, repair_summary (original_pages,
+            recovered_pages, corrupted_pages, recovery_rate_percent),
+            file_info with the repaired_path, repair_notes, and
+            corrupted_page_numbers (1-based) for pages that were dropped.
         """
         start_time = time.time()
 
@@ -358,12 +466,42 @@ class PDFUtilitiesMixin(MCPMixin):
 
     @mcp_tool(
         name="rotate_pages",
-        description="Rotate specific pages by 90, 180, or 270 degrees"
+        description=(
+            "Set the display rotation of some or all pages, writing a NEW "
+            "PDF. Fixes sideways scans and landscape pages.\n"
+            "\n"
+            "rotation is ABSOLUTE, not additive: it sets each chosen page's "
+            "rotation to that value, so rotating by 90 twice still leaves "
+            "the page at 90, not 180. Only 90, 180 and 270 are accepted "
+            "(clockwise). There is no 0 and no negative, so you cannot "
+            "un-rotate a page with this tool — pick the absolute angle you "
+            "want instead.\n"
+            "\n"
+            "`pages` is a plain comma/range STRING of 1-based page numbers, "
+            "NOT JSON: \"3\", \"1,3,5\", \"2-7\", or mixed \"1,4-6,9\". "
+            "Leave it out (or null) to rotate EVERY page. A range is "
+            "inclusive on both ends. Page numbers outside the document are "
+            "silently dropped rather than raising, so compare "
+            "rotation_summary.pages_requested with pages_rotated; a badly "
+            "formed string does fail the call.\n"
+            "\n"
+            "output_filename is a BARE FILENAME, not a path: the file is "
+            "written into the INPUT PDF's own directory. The default "
+            "\"rotated_document.pdf\" is generic, so two calls on different "
+            "PDFs in the same directory would overwrite each other — pass a "
+            "distinct name."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # clobbers output_filename in the input's directory
+            "idempotentHint": True,      # rotation is absolute, so re-running is a no-op change
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def rotate_pages(
         self,
         pdf_path: str,
-        rotation: int = 90,
+        rotation: Literal[90, 180, 270] = 90,
         pages: Optional[str] = None,
         output_filename: str = "rotated_document.pdf"
     ) -> Dict[str, Any]:
@@ -371,13 +509,20 @@ class PDFUtilitiesMixin(MCPMixin):
         Rotate specific pages in a PDF document.
 
         Args:
-            pdf_path: Path to input PDF file
-            rotation: Rotation angle (90, 180, 270 degrees)
-            pages: Page numbers to rotate (comma-separated, 1-based), None for all
-            output_filename: Name for the output file
+            pdf_path: Path to the source PDF, or an HTTPS URL. The output is
+                written into this file's parent directory.
+            rotation: Absolute clockwise rotation to apply: 90, 180 or 270.
+                Anything else is rejected. Not cumulative across calls.
+            pages: Comma/range string of 1-based page numbers, e.g. "1,4-6,9".
+                Ranges are inclusive. None (the default) rotates all pages.
+            output_filename: Filename only (no directory), created next to
+                the input. Defaults to "rotated_document.pdf".
 
         Returns:
-            Dictionary containing rotation results
+            Dict with success, rotation_summary (rotation_degrees,
+            total_pages, pages_requested, pages_rotated, pages_failed),
+            output_info with the full output_path, and rotated_pages as
+            1-based page numbers.
         """
         start_time = time.time()
 
@@ -452,28 +597,79 @@ class PDFUtilitiesMixin(MCPMixin):
 
     @mcp_tool(
         name="convert_to_images",
-        description="Convert PDF pages to image files"
+        description=(
+            "RENDER whole PDF pages to raster image files, one image per "
+            "page, exactly as the page would look on screen (text, vectors "
+            "and pictures flattened together). This is what you want to LOOK "
+            "AT a page or feed it to a vision model.\n"
+            "\n"
+            "Do not confuse it with the extract_* tools, which pull out what "
+            "is stored inside the file rather than a picture of the page: "
+            "extract_images pulls the EMBEDDED bitmaps out on their own, and "
+            "extract_vector_graphics exports pages as SVG for schematics and "
+            "line art.\n"
+            "\n"
+            "Files are written into the INPUT PDF's own directory as "
+            "{output_prefix}_{3-digit 1-based page}.{format} — for example "
+            "page_001.png, page_002.png. There is no output-directory "
+            "parameter, and same-named files are overwritten, so give each "
+            "run a distinct output_prefix.\n"
+            "\n"
+            "`pages` is a plain comma/range STRING of 1-based page numbers, "
+            "NOT JSON: \"3\", \"1,3,5\", \"2-7\", or mixed \"1,4-6,9\"; "
+            "ranges are inclusive. Omitting it renders EVERY page, which on "
+            "a long document at the default 300 dpi means a lot of large "
+            "files — pass a range and consider dpi 100-150 for previews. "
+            "dpi scales both dimensions (300 dpi turns a Letter page into "
+            "roughly 2550x3300 px). Use 'jpg'/'jpeg' for photographic pages "
+            "and smaller files; 'png' (the default) is lossless and better "
+            "for text and line art. A page that fails to render is skipped "
+            "with the call still reporting success, so compare "
+            "conversion_summary.pages_requested with pages_converted.\n"
+            "\n"
+            "For a dynamic XFA form the render is Adobe's 'please open in "
+            "Reader' placeholder, not the real form; the response then sets "
+            "is_xfa and a warning, and extract_xfa_fields is what you "
+            "actually want."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes one image file per page
+            "destructiveHint": True,     # clobbers same-named images in the input's directory
+            "idempotentHint": True,      # same args re-render the same files
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def convert_to_images(
         self,
         pdf_path: str,
         pages: Optional[str] = None,
         dpi: int = 300,
-        format: str = "png",
+        format: Literal["png", "jpg", "jpeg"] = "png",
         output_prefix: str = "page"
     ) -> Dict[str, Any]:
         """
         Convert PDF pages to image files.
 
         Args:
-            pdf_path: Path to PDF file
-            pages: Page numbers to convert (comma-separated, 1-based), None for all
-            dpi: DPI for image rendering
-            format: Output image format ("png", "jpg", "jpeg")
-            output_prefix: Prefix for output image files
+            pdf_path: Path to the source PDF, or an HTTPS URL. Images are
+                written into this file's parent directory.
+            pages: Comma/range string of 1-based page numbers, e.g.
+                "1,4-6,9". Ranges are inclusive. None (the default) renders
+                every page.
+            dpi: Render resolution, default 300. Lower it (100-150) for
+                previews or vision-model input; higher values grow both
+                dimensions and the file size quadratically.
+            format: "png" (default, lossless) or "jpg"/"jpeg" (smaller,
+                lossy). Also becomes the file extension.
+            output_prefix: Filename stem for the outputs, default "page",
+                giving page_001.png, page_002.png, ...
 
         Returns:
-            Dictionary containing conversion results
+            Dict with success, conversion_summary (pages_requested,
+            pages_converted, pages_failed, format, dpi, total size) and
+            converted_images listing each file's page, filename, absolute
+            path, byte size and pixel dimensions. For a dynamic XFA form it
+            also carries is_xfa, xfa_type and a warning.
         """
         start_time = time.time()
 

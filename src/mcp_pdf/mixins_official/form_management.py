@@ -7,7 +7,7 @@ import asyncio
 import functools
 import time
 import json
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Literal, Optional, List
 import logging
 
 # PDF processing libraries
@@ -34,17 +34,53 @@ class FormManagementMixin(MCPMixin):
 
     @mcp_tool(
         name="extract_form_data",
-        description="Extract form fields and values"
+        description=(
+            "List every interactive AcroForm field in a PDF with its name, "
+            "type, current value, page, coordinates and required/readonly "
+            "flags. Read-only: nothing is written. Run this FIRST to learn "
+            "the exact field names before calling fill_form_pdf, whose data "
+            "keys must match them byte for byte.\n"
+            "\n"
+            "Each field carries both `field_type`, from the portable "
+            "six-term vocabulary shared with extract_xfa_fields (text, "
+            "checkbox, radio, dropdown, date, signature, plus button and "
+            "unknown), and `field_type_raw`, the unmerged AcroForm type that "
+            "still distinguishes listbox from combobox. `coordinates` is "
+            "{x, y, width, height} where x/y are the field's lower-left "
+            "corner in PDF points from the page's BOTTOM-left origin, the "
+            "opposite convention to extract_xfa_fields' design-time boxes. "
+            "`choices` and `max_length` appear only when the widget defines "
+            "them.\n"
+            "\n"
+            "DYNAMIC XFA forms return success=false with is_xfa=true, "
+            "xfa_type=\"dynamic\" and a hint pointing at extract_xfa_fields, "
+            "because their fields live in the XFA template and not in "
+            "AcroForm at all. A file neither reader can parse returns "
+            "success=false with xfa_detection_failed=true, which means "
+            "damaged rather than form-less."
+        ),
+        annotations={
+            "readOnlyHint": True,        # reads only, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def extract_form_data(self, pdf_path: str) -> Dict[str, Any]:
         """
         Extract all form fields and their current values from PDF.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
+            pdf_path: Path to the PDF, or an HTTPS URL to fetch.
 
         Returns:
-            Dictionary containing form fields and their values
+            Dict with success, form_summary (total_fields, required_fields,
+            readonly_fields, field_types histogram, has_form) and form_fields,
+            each entry carrying page, field_name, field_type, field_type_raw,
+            field_value, field_label, is_required, is_readonly, coordinates
+            and, when present, choices and max_length.
+
+            On a dynamic XFA form: success=false plus is_xfa, xfa_type and a
+            hint naming extract_xfa_fields.
         """
         start_time = time.time()
 
@@ -87,6 +123,12 @@ class FormManagementMixin(MCPMixin):
                 }
 
             doc = pymupdf.open(str(path))
+            # Read the page count while the document is still open. The
+            # success return below used to call len(doc) after doc.close(),
+            # which raises "document closed" on PyMuPDF 1.28 — from inside
+            # the return statement, so the handler turned every successful
+            # extraction into success=false with that opaque message.
+            total_pages = len(doc)
 
             form_fields = []
             total_fields = 0
@@ -157,7 +199,7 @@ class FormManagementMixin(MCPMixin):
                 "form_fields": form_fields,
                 "file_info": {
                     "path": str(path),
-                    "total_pages": len(doc) if 'doc' in locals() else 0
+                    "total_pages": total_pages
                 },
                 "extraction_time": round(time.time() - start_time, 2)
             }
@@ -184,7 +226,38 @@ class FormManagementMixin(MCPMixin):
 
     @mcp_tool(
         name="fill_form_pdf",
-        description="Fill PDF form with provided data"
+        description=(
+            "Fill the interactive AcroForm fields of an existing PDF, writing "
+            "a NEW PDF to output_path. Requires the PDF to have real form "
+            "widgets: for a scanned or flat form with no widgets use "
+            "fill_permit_form, which draws text at coordinates instead, and "
+            "for a dynamic XFA form neither tool can fill it (see "
+            "extract_xfa_fields).\n"
+            "\n"
+            "`form_data` is a JSON OBJECT keyed by AcroForm field name:\n"
+            '  {"applicant_name": "Jane Roe", "parcel": "R1234567", '
+            '"agree": "Yes"}\n'
+            "\n"
+            "Names must match the document exactly; get them from "
+            "extract_form_data. A key with no matching widget is SILENTLY "
+            "IGNORED and appears in no error list, so compare fields_filled "
+            "against total_data_provided rather than trusting success. Every "
+            "value is coerced with str(), so a checkbox needs its literal "
+            "on-state string such as \"Yes\" or \"Off\" (JSON true becomes "
+            'the useless string "True"), and a number becomes its text form.\n'
+            "\n"
+            "flatten=True does NOT merely lock the fields: it rasterises "
+            "every page to an image at 72 DPI and builds a new document from "
+            "those pictures. The result has no selectable text, no "
+            "searchability and no annotations at all. Leave it False unless "
+            "you specifically want a picture of the filled form."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,      # same args produce the same output file
+            "openWorldHint": True,       # input_path may be an HTTPS URL
+        },
     )
     async def fill_form_pdf(
         self,
@@ -197,13 +270,24 @@ class FormManagementMixin(MCPMixin):
         Fill an existing PDF form with provided data.
 
         Args:
-            input_path: Path to input PDF file or HTTPS URL
-            output_path: Path where filled PDF will be saved
-            form_data: JSON string containing field names and values
-            flatten: Whether to flatten the form (make fields non-editable)
+            input_path: Path to the source PDF, or an HTTPS URL to fetch.
+            output_path: Where to write the filled PDF. Overwritten if it
+                already exists; the source is never modified in place.
+            form_data: JSON object mapping AcroForm field name to value, e.g.
+                {"applicant_name": "Jane Roe", "agree": "Yes"}. Names must
+                match the document exactly (see extract_form_data); unmatched
+                keys are ignored without error. Values are str()-coerced, so
+                checkboxes need their on-state string, not JSON true.
+            flatten: When True, rasterise each page to a 72 DPI image and
+                rebuild the document from those images. Fields become
+                non-editable because they no longer exist, and all text
+                becomes unsearchable. Default False, which keeps a real PDF
+                with live (still editable) fields.
 
         Returns:
-            Dictionary containing operation results
+            Dict with success, fill_summary (fields_filled, fields_failed,
+            total_data_provided, form_flattened), failed_fields, the output
+            path and its size.
         """
         start_time = time.time()
 
@@ -296,26 +380,87 @@ class FormManagementMixin(MCPMixin):
 
     @mcp_tool(
         name="create_form_pdf",
-        description="Create new PDF form with interactive fields"
+        description=(
+            "Build a BRAND-NEW single-page PDF form from scratch, writing it "
+            "to output_path. There is no input PDF; to add widgets to a "
+            "document you already have, use add_form_fields instead. "
+            "Requires reportlab (pip install mcp-pdf[forms]), and returns a "
+            "clear error naming it if absent.\n"
+            "\n"
+            "`fields` is a JSON array of objects:\n"
+            '  [{"name": "applicant", "type": "text", "label": "Applicant '
+            'name", "x": 50, "y": 700, "width": 220, "height": 20,\n'
+            '    "tooltip": "Legal name as on the deed"},\n'
+            '   {"name": "county", "type": "dropdown", "options": ["Ada", '
+            '"Canyon"]},\n'
+            '   {"name": "agree", "type": "checkbox", "checked": false}]\n'
+            "\n"
+            "type is text | checkbox | dropdown | signature (default text). "
+            "Anything else draws only the label and still counts toward "
+            "fields_created. name defaults to field_<n>, label defaults to "
+            "the name and is drawn 5 points above the box. x defaults to 50 "
+            "and y to 700 minus 40 per field already created, both in PDF "
+            "points from the page's BOTTOM-left origin; width 200, height 20. "
+            "tooltip defaults to \"\". `options` applies to dropdown only, a "
+            'list of strings defaulting to ["Option 1", "Option 2"] (an '
+            "empty list falls back to that too), and the widget opens with "
+            "its FIRST option already selected rather than blank. `checked` "
+            "applies to checkbox only (default false), and a checkbox "
+            "ignores width, using height as its side length. A signature "
+            "field is really a text field with a "
+            "thicker border and the word SIGNATURE printed inside; it is not "
+            "a cryptographic signature field.\n"
+            "\n"
+            "EVERYTHING LANDS ON ONE PAGE. No page break is ever emitted, so "
+            "with the stacked default y more than about 17 fields run off the "
+            "bottom of the sheet and are invisible though still reported as "
+            "created. Pass explicit x/y for anything larger."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,      # same args produce the same output file
+            "openWorldHint": False,      # no input path; nothing is fetched
+        },
     )
     async def create_form_pdf(
         self,
         output_path: str,
         fields: str,
         title: str = "Form Document",
-        page_size: str = "A4"
+        page_size: Literal["A4", "Letter", "Legal"] = "A4"
     ) -> Dict[str, Any]:
         """
         Create a new PDF form with interactive fields.
 
         Args:
-            output_path: Path where new PDF form will be saved
-            fields: JSON string describing form fields
-            title: Document title
-            page_size: Page size ("A4", "Letter", "Legal")
+            output_path: Where to write the new PDF. Overwritten if it
+                already exists.
+            fields: JSON array of field objects. Each may carry:
+                - "name":   AcroForm field name (default "field_<n>")
+                - "type":   "text" | "checkbox" | "dropdown" | "signature"
+                            (default "text"); other values draw only a label
+                - "label":  text drawn 5 points above the box (default: name)
+                - "x", "y": lower-left corner in PDF points from the page's
+                            bottom-left origin (defaults 50 and
+                            700 - 40*fields_already_created)
+                - "width", "height": size in points (defaults 200, 20);
+                            checkbox ignores width and uses height as its side
+                - "tooltip": hover text (default "")
+                - "options": dropdown choices, list of strings (default
+                            ["Option 1", "Option 2"]); the first one starts
+                            selected
+                - "checked": checkbox initial state (default False)
+            title: Value written into the PDF's document Title metadata
+                (default "Form Document"). Not drawn on the page.
+            page_size: Sheet size, one of "A4", "Letter" or "Legal"
+                (default "A4"). Case-sensitive.
 
         Returns:
-            Dictionary containing creation results
+            Dict with success, form_info (fields_created,
+            total_fields_requested, page_size, title), the output path and its
+            size. A missing reportlab yields success=false with an install
+            hint.
         """
         start_time = time.time()
 
@@ -393,9 +538,19 @@ class FormManagementMixin(MCPMixin):
                             )
 
                         elif field_type == "dropdown":
-                            options = field_def.get("options", ["Option 1", "Option 2"])
+                            # `or` rather than a get() default so an explicit
+                            # empty list also falls back: reportlab cannot
+                            # build a choice widget with no options.
+                            options = field_def.get("options") or ["Option 1", "Option 2"]
+                            # value must be non-empty and one of the options.
+                            # reportlab 4.4.3's _textfield only binds its
+                            # internal `lbextras` inside `if value:`, so
+                            # choice(value='') dies with UnboundLocalError —
+                            # which this handler swallowed, silently dropping
+                            # every dropdown from the generated form.
                             c.acroForm.choice(
                                 name=field_name,
+                                value=options[0],
                                 tooltip=field_def.get("tooltip", ""),
                                 x=x, y=y, width=width, height=height,
                                 options=options,
@@ -529,7 +684,12 @@ class FormManagementMixin(MCPMixin):
             "detection_failed}. IMPORTANT: check detection_failed first. When "
             "it is true, is_xfa is null (not false) because the file could not "
             "be read at all, which is a different fact from 'no XFA here'."
-        )
+        ),
+        annotations={
+            "readOnlyHint": True,        # inspects the file, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def is_xfa_pdf(self, pdf_path: str) -> Dict[str, Any]:
         """Detect XFA presence and type (dynamic vs static).
@@ -585,7 +745,12 @@ class FormManagementMixin(MCPMixin):
             "non-zipForm producer it usually holds most of the fields. The "
             "`original` XFA name is on every field and is the round-trip key "
             "for actually filling the form."
-        )
+        ),
+        annotations={
+            "readOnlyHint": True,        # parses the XFA template, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def extract_xfa_fields(
         self,

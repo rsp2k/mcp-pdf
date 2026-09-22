@@ -12,7 +12,7 @@ import time
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Literal, Optional, List, Tuple
 
 import pymupdf
 
@@ -67,12 +67,20 @@ class StructureDetectionMixin(MCPMixin):
             "compact summary with the file path. Set inline=True to return "
             "the complete structure in the response (use for small documents)."
         ),
+        annotations={
+            "readOnlyHint": False,       # the default path writes a _structure.json file
+            "destructiveHint": True,     # overwrites {stem}_structure.json in the output dir
+            "idempotentHint": True,      # detection is deterministic for a given PDF
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def detect_structure(
         self,
         pdf_path: str,
         pages: Optional[str] = None,
-        strategies: str = "auto",
+        strategies: Literal[
+            "auto", "bookmarks", "fonts", "numbering", "all"
+        ] = "auto",
         heading_pattern: Optional[str] = None,
         max_heading_levels: int = 3,
         min_confidence: float = 0.5,
@@ -83,26 +91,45 @@ class StructureDetectionMixin(MCPMixin):
         Detect logical document structure.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL.
-            pages: Pages to analyse (comma-separated, 1-based). None = all.
-            strategies: Detection strategy —
-                "auto"      try bookmarks first, always run fonts, cross-validate.
-                "bookmarks" bookmarks only.
-                "fonts"     font-size heuristic only.
-                "numbering" regex / numbering patterns only.
-                "all"       run every strategy and merge.
-            heading_pattern: Optional user-supplied regex for headings.
-            max_heading_levels: Maximum heading depth to report (1-6).
-            min_confidence: Drop boundaries below this confidence (0-1).
-            output_directory: Directory for the structure JSON file.
-                Defaults to the same directory as the PDF.
-            inline: If True, return full structure in the response instead
-                of writing to a file. Useful for small documents or internal
+            pdf_path: Path to the PDF, or an HTTPS URL to fetch.
+            pages: Pages to analyse, 1-based. Accepts single pages, comma lists
+                and ranges: "5", "1,3,5", "1-10", "1,3-5,7". None (default)
+                means every page. Bookmark detection always covers the whole
+                document; this only narrows the font and numbering passes.
+            strategies: Which detectors to run, then merge —
+                "auto"      bookmarks + fonts + numbering (the default).
+                "all"       identical to "auto"; no extra detector exists.
+                "bookmarks" the PDF's own table of contents only.
+                "fonts"     font-size histogram heuristic only.
+                "numbering" built-in Chapter/Part/Section/1.2.3 regexes only.
+                Any other string runs NOTHING and returns an empty structure
+                with success=true, so check total_boundaries.
+            heading_pattern: Extra user regex applied to page text on top of
+                whichever strategies ran (IGNORECASE | MULTILINE). Every match
+                becomes a level-1 boundary at confidence 0.85. An invalid regex
+                is logged and skipped, not reported as an error.
+            max_heading_levels: Maximum heading depth to report, clamped to 1-6
+                (default 3). Also caps how many font-size clusters become levels.
+            min_confidence: Drop boundaries below this confidence, 0-1 (default
+                0.5). Rough scale: bookmarks 0.95, user regex 0.85, fonts
+                0.70-0.90, numbering 0.70-0.80; a boundary confirmed by two
+                detectors gains 0.05, capped at 0.99.
+            output_directory: Directory for the structure JSON file, created if
+                missing. Defaults to the directory holding the PDF, so a
+                read-looking call still writes next to the source. The file is
+                named "{pdf_stem}_structure.json".
+            inline: If True, return full structure in the response and write
+                NOTHING to disk. Useful for small documents or internal
                 calls. Default: False.
 
         Returns:
-            Dict with success flag, compact summary + file path (default),
-            or full hierarchical structure + flat boundaries (inline=True).
+            Dict with success plus, by default, output_file, total_boundaries,
+            top_level_sections, strategies_used, total_pages and a preview list
+            of up to 10 "p{start}-{end}: Title" lines. With inline=True instead:
+            "structure" carrying the nested "sections" tree (title, level,
+            page_start, page_end, confidence, detection_method, subsections) and
+            the "flat_boundaries" list, plus detection_info describing the body
+            font and per-level heading fonts.
         """
         start_time = time.time()
 
@@ -755,6 +782,12 @@ class StructureDetectionMixin(MCPMixin):
             "directories. Each section gets its own PDF and optionally markdown + images. "
             "Combines detect_structure + split + pdf_to_markdown into one operation."
         ),
+        annotations={
+            "readOnlyHint": False,       # creates a directory tree of PDFs/markdown/images
+            "destructiveHint": True,     # overwrites same-named files under output_directory
+            "idempotentHint": True,      # deterministic section names; re-running rewrites them
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def split_pdf_by_structure(
         self,
@@ -764,29 +797,53 @@ class StructureDetectionMixin(MCPMixin):
         include_markdown: bool = True,
         include_images: bool = True,
         include_vectors: bool = True,
-        strategies: str = "auto",
+        strategies: Literal[
+            "auto", "bookmarks", "fonts", "numbering", "all"
+        ] = "auto",
         heading_pattern: Optional[str] = None,
         min_confidence: float = 0.5,
-        output_format: str = "markdown",
+        output_format: Literal["markdown", "pdf", "both"] = "markdown",
     ) -> Dict[str, Any]:
         """
         Detect structure and split a PDF into per-section directories.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL.
-            output_directory: Root directory for section output folders.
-            split_level: Heading level to split on (1=chapters, 2=sections, etc.).
-            include_markdown: Convert each split PDF to markdown.
+            pdf_path: Path to the PDF, or an HTTPS URL to fetch.
+            output_directory: Root directory for section output folders, created
+                if missing. One subdirectory per section, named
+                "{index:02d}_{sanitised_title}" (title stripped of punctuation
+                and truncated to ~50 chars).
+            split_level: Split on every boundary whose level is <= this value,
+                so 1 = chapters only, 2 = chapters and their sections, and so on
+                (default 1). Sections run from their own start page to the page
+                before the next boundary, with the last one running to the end.
+            include_markdown: Convert each split PDF to markdown. Only takes
+                effect when output_format is "markdown" or "both".
             include_images: Extract raster images during markdown conversion.
             include_vectors: Extract vector graphics during markdown conversion.
-            strategies: Detection strategy for structure detection.
-            heading_pattern: Optional user-supplied regex for headings.
-            min_confidence: Drop boundaries below this confidence (0-1).
-            output_format: "markdown", "pdf", or "both".
+            strategies: Detection strategy, same values as detect_structure.
+                Structure is always detected over the WHOLE document; there is
+                no pages parameter here.
+            heading_pattern: Optional user-supplied regex for headings, applied
+                as in detect_structure (matches become level-1 boundaries).
+            min_confidence: Drop boundaries below this confidence, 0-1 (default
+                0.5). If nothing survives the split_level + min_confidence
+                filter the call returns success=false with the total boundary
+                count, which is the cue to lower min_confidence or raise
+                split_level.
+            output_format: "markdown" (default) writes the markdown and then
+                DELETES the intermediate per-section PDF — though only when the
+                markdown actually succeeded, so a failed conversion silently
+                leaves the PDF behind; "pdf" keeps the PDFs and skips markdown
+                entirely (include_markdown is ignored); "both" keeps the PDF and
+                the markdown.
 
         Returns:
-            Dict with per-section results, paths, extraction counts, and
-            the detected structure.
+            Dict with success, sections_created, output_directory, split_time,
+            and "sections": a list of preformatted SUMMARY STRINGS shaped
+            "p{start}-{end}: {title} (N img, M vec)" — not objects, and not the
+            per-section file paths or the detected structure. Read the output
+            directory itself for the artefacts.
         """
         start_time = time.time()
 
@@ -932,6 +989,12 @@ class StructureDetectionMixin(MCPMixin):
             "markdown + images + vectors in a separate output directory. Replaces "
             "24+ individual tool calls with a single operation."
         ),
+        annotations={
+            "readOnlyHint": False,       # writes a PDF + markdown + assets per section
+            "destructiveHint": True,     # overwrites same-named files in each output_dir
+            "idempotentHint": True,      # deterministic filenames; re-running rewrites them
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def batch_extract(
         self,
@@ -944,16 +1007,33 @@ class StructureDetectionMixin(MCPMixin):
         Extract multiple page ranges from a single PDF into separate directories.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL.
-            sections: JSON string — a list of objects, each with:
-                - "pages": page range string, e.g. "11-80"
-                - "output_dir": output directory path for this section
-                - "name": human-readable name for the section
+            pdf_path: Path to the PDF, or an HTTPS URL to fetch. Opened once and
+                reused for every section.
+            sections: JSON string — a non-empty array of objects, each with:
+                - "pages": REQUIRED page range, 1-based. Only these three forms
+                  parse: "11-80", "5" (single page) or "11-end". A comma list
+                  such as "1,4,9" is NOT supported here and fails the section.
+                  Out-of-range numbers are clamped to the document.
+                - "output_dir": REQUIRED directory for this section, created if
+                  missing. Each section needs its own, or later sections
+                  overwrite earlier ones.
+                - "name": optional label, defaults to "section_00", "section_01",
+                  ... It is sanitised into the PDF and markdown filenames, so
+                  two sections sharing a name inside one directory collide.
+                A section missing "pages" or "output_dir" is reported as failed
+                and the rest still run.
             include_images: Extract raster images during markdown conversion.
             include_vectors: Extract vector graphics during markdown conversion.
 
         Returns:
-            Dict with per-section extraction results and timing.
+            Dict with success, sections_processed, batch_time and a "sections"
+            list. Each section ALWAYS gets both a "{name}.pdf" and a
+            "{name}.md" (plus images/ and vectors/) in its output_dir — there is
+            no pdf/markdown switch. A successful entry carries name, pages,
+            output_directory, pdf_path and the nested markdown_result; a failed
+            one carries "success": false and "error". The top-level "success" is
+            true whenever the batch ran at all, EVEN IF every section failed, so
+            inspect the per-section entries.
         """
         start_time = time.time()
 

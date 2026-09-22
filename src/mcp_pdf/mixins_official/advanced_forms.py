@@ -30,7 +30,39 @@ class AdvancedFormsMixin(MCPMixin):
 
     @mcp_tool(
         name="add_form_fields",
-        description="Add form fields to an existing PDF"
+        description=(
+            "Add interactive AcroForm widgets to an EXISTING PDF, writing a "
+            "NEW PDF to output_path. Use create_form_pdf to build a form on a "
+            "blank page instead, and add_radio_group / add_textarea_field / "
+            "add_date_field for those single specialised widgets.\n"
+            "\n"
+            "IMPORTANT: only type \"text\" and type \"checkbox\" actually "
+            "create a widget. Any other value (dropdown, radio, signature) "
+            "still counts toward fields_added but produces NOTHING in the "
+            "output, so verify with extract_form_data before trusting the "
+            "count.\n"
+            "\n"
+            "`fields` is a JSON array of objects:\n"
+            '  [{"page": 1, "type": "text", "name": "applicant", "x": 72, '
+            '"y": 700, "width": 220, "height": 18}]\n'
+            "\n"
+            "page is 1-based (default 1); a page outside the document is "
+            "skipped SILENTLY, with no entry in any error list. type is text "
+            "| checkbox (default text). name defaults to field_<n> derived "
+            "from the running added-count, so omitting it on several fields "
+            "gives them generated names. x/y are the widget rect's LOWER-LEFT "
+            "corner in PDF points from the page's BOTTOM-left origin "
+            "(defaults 50/100); width defaults to 200, height to 20, and the "
+            "rect spans (x, y) to (x+width, y+height). Note this is the "
+            "opposite convention to fill_permit_form, which measures y from "
+            "the TOP of the page."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,      # same args produce the same output file
+            "openWorldHint": True,       # input_path may be an HTTPS URL
+        },
     )
     async def add_form_fields(
         self,
@@ -42,12 +74,24 @@ class AdvancedFormsMixin(MCPMixin):
         Add interactive form fields to an existing PDF document.
 
         Args:
-            input_path: Path to input PDF file
-            output_path: Path where modified PDF will be saved
-            fields: JSON string describing form fields to add
+            input_path: Path to the source PDF, or an HTTPS URL to fetch.
+            output_path: Where to write the modified PDF. Overwritten if it
+                already exists; the source is never modified in place.
+            fields: JSON array of field objects. Each may carry:
+                - "page":   1-based page number (default 1). Out-of-range
+                            pages are skipped without an error.
+                - "type":   "text" or "checkbox" (default "text"). Any other
+                            value creates no widget but is still counted.
+                - "name":   AcroForm field name (default "field_<n>")
+                - "x", "y": lower-left corner in PDF points from the page's
+                            bottom-left origin (defaults 50, 100)
+                - "width", "height": widget size in points (defaults 200, 20)
+                Example: [{"page": 1, "type": "checkbox", "name": "agree",
+                           "x": 72, "y": 120, "width": 12, "height": 12}]
 
         Returns:
-            Dictionary containing operation results
+            Dict with success, fields_requested / fields_added (which can
+            differ silently), output size and the output path.
         """
         start_time = time.time()
 
@@ -89,19 +133,26 @@ class AdvancedFormsMixin(MCPMixin):
                     # Create field rectangle
                     field_rect = pymupdf.Rect(x, y, x + width, y + height)
 
+                    # A Widget must be fully populated BEFORE add_widget:
+                    # a bare Widget() has rect=None and add_widget raises
+                    # AttributeError on it (PyMuPDF 1.28). Assigning the
+                    # attributes to add_widget's return value, as this did
+                    # until 2026-09-21, meant every call threw, got swallowed
+                    # by the handler below, and produced a PDF with no fields
+                    # while still reporting success.
                     if field_type == "text":
-                        widget = page.add_widget(pymupdf.Widget())
+                        widget = pymupdf.Widget()
                         widget.field_name = field_name
                         widget.field_type = pymupdf.PDF_WIDGET_TYPE_TEXT
                         widget.rect = field_rect
-                        widget.update()
+                        page.add_widget(widget)
 
                     elif field_type == "checkbox":
-                        widget = page.add_widget(pymupdf.Widget())
+                        widget = pymupdf.Widget()
                         widget.field_name = field_name
                         widget.field_type = pymupdf.PDF_WIDGET_TYPE_CHECKBOX
                         widget.rect = field_rect
-                        widget.update()
+                        page.add_widget(widget)
 
                     fields_added += 1
 
@@ -137,7 +188,34 @@ class AdvancedFormsMixin(MCPMixin):
 
     @mcp_tool(
         name="add_radio_group",
-        description="Add a radio button group with mutual exclusion to PDF"
+        description=(
+            "Draw a vertical column of radio-button widgets with a text label "
+            "beside each, writing a NEW PDF to output_path.\n"
+            "\n"
+            "CAVEAT, read before using: these buttons are NOT mutually "
+            "exclusive. Each one is given its own distinct field name "
+            '("<group_name>_0", "<group_name>_1", ...), and a PDF reader only '
+            "enforces exclusion between widgets that SHARE a single field "
+            "name. A user can therefore tick several. Treat this as a "
+            "labelled checkbox column, or rename the widgets afterwards.\n"
+            "\n"
+            "`options` is a JSON array of label strings:\n"
+            '  ["Residential", "Commercial", "Industrial"]\n'
+            "\n"
+            "Each button is a 15x15 point box whose lower-left corner is at "
+            "(x, y + index * spacing). Because y grows UPWARD from the page's "
+            "bottom-left origin, later options sit HIGHER on the page; pass a "
+            "negative spacing to run top-to-bottom instead. The label is "
+            "drawn 20 points to the right of each box in 10pt text. Buttons "
+            "that fail are logged server-side and simply missing from "
+            "buttons_added, so compare it against options_requested."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,
+            "openWorldHint": True,       # input_path may be an HTTPS URL
+        },
     )
     async def add_radio_group(
         self,
@@ -151,20 +229,30 @@ class AdvancedFormsMixin(MCPMixin):
         spacing: int = 30
     ) -> Dict[str, Any]:
         """
-        Add a radio button group to PDF with mutual exclusion.
+        Add a column of radio-button widgets with labels.
 
         Args:
-            input_path: Path to input PDF file
-            output_path: Path where modified PDF will be saved
-            group_name: Name of the radio button group
-            options: JSON array of option labels
-            page: Page number (1-based)
-            x: X coordinate for first radio button
-            y: Y coordinate for first radio button
-            spacing: Vertical spacing between options
+            input_path: Path to the source PDF, or an HTTPS URL to fetch.
+            output_path: Where to write the modified PDF. Overwritten if it
+                already exists; the source is never modified in place.
+            group_name: Prefix for the widget field names, which become
+                "<group_name>_0", "<group_name>_1" and so on. Because the
+                names differ, the buttons are NOT mutually exclusive.
+            options: JSON array of label strings, e.g.
+                ["Residential", "Commercial"]. One 15x15 point button is
+                drawn per entry, in array order.
+            page: 1-based page number (default 1). Out of range is an error.
+            x: Left edge of every button, in PDF points from the page's
+                bottom-left origin (default 50).
+            y: Bottom edge of the FIRST button, in PDF points from the page's
+                bottom-left origin (default 100).
+            spacing: Points added to y per option (default 30). Positive
+                values stack options upward; pass a negative value to run
+                down the page.
 
         Returns:
-            Dictionary containing operation results
+            Dict with success, group_name, options_requested, buttons_added,
+            page, output size and the output path.
         """
         start_time = time.time()
 
@@ -204,12 +292,16 @@ class AdvancedFormsMixin(MCPMixin):
                     button_y = y + (i * spacing)
                     button_rect = pymupdf.Rect(x, button_y, x + 15, button_y + 15)
 
-                    # Create radio button widget
-                    widget = pdf_page.add_widget(pymupdf.Widget())
+                    # Populate the Widget before adding it; see the note in
+                    # add_form_fields. A radio button additionally needs a
+                    # string field_value set up front, or MuPDF raises
+                    # "bad xref" while building its appearance stream.
+                    widget = pymupdf.Widget()
                     widget.field_name = f"{group_name}_{i}"
                     widget.field_type = pymupdf.PDF_WIDGET_TYPE_RADIOBUTTON
+                    widget.field_value = "Off"
                     widget.rect = button_rect
-                    widget.update()
+                    pdf_page.add_widget(widget)
 
                     # Add label text next to radio button
                     text_point = pymupdf.Point(x + 20, button_y + 10)
@@ -251,7 +343,29 @@ class AdvancedFormsMixin(MCPMixin):
 
     @mcp_tool(
         name="add_textarea_field",
-        description="Add a multi-line text area with word limits to PDF"
+        description=(
+            "Add ONE large text widget to an existing PDF, writing a NEW PDF "
+            "to output_path. Use add_form_fields to add several ordinary-sized "
+            "fields in a single call.\n"
+            "\n"
+            "What it really produces is a plain AcroForm text widget of the "
+            "given size. word_limit is NOT enforced anywhere: it only supplies "
+            "the number in an optional grey \"Max words: N\" caption, and a "
+            "reader will happily accept more. The widget is also not flagged "
+            "multiline, so wrapping is up to the reader.\n"
+            "\n"
+            "Positioning, all in PDF points from the page's BOTTOM-left "
+            "origin: the box spans (x, y) to (x+width, y+height). `label`, if "
+            "non-empty, is drawn 15 points BELOW y, so it lands under the box "
+            "rather than above it. The word-count caption is drawn 15 points "
+            "ABOVE the box, near its right edge."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,
+            "openWorldHint": True,       # input_path may be an HTTPS URL
+        },
     )
     async def add_textarea_field(
         self,
@@ -268,23 +382,30 @@ class AdvancedFormsMixin(MCPMixin):
         show_word_count: bool = True
     ) -> Dict[str, Any]:
         """
-        Add a multi-line text area field with word counting capabilities.
+        Add one large text widget, optionally captioned with a word limit.
 
         Args:
-            input_path: Path to input PDF file
-            output_path: Path where modified PDF will be saved
-            field_name: Name of the textarea field
-            x: X coordinate
-            y: Y coordinate
-            width: Field width
-            height: Field height
-            page: Page number (1-based)
-            word_limit: Maximum word count
-            label: Optional field label
-            show_word_count: Whether to show word count indicator
+            input_path: Path to the source PDF, or an HTTPS URL to fetch.
+            output_path: Where to write the modified PDF. Overwritten if it
+                already exists; the source is never modified in place.
+            field_name: AcroForm field name for the widget. Used verbatim.
+            x: Left edge in PDF points from the page's bottom-left origin
+                (default 50).
+            y: Bottom edge in PDF points from the page's bottom-left origin
+                (default 100).
+            width: Box width in points (default 400).
+            height: Box height in points (default 100).
+            page: 1-based page number (default 1). Out of range is an error.
+            word_limit: Number shown in the "Max words: N" caption (default
+                500). Advisory only; nothing enforces it.
+            label: Caption text drawn 15 points below y in 10pt black. Empty
+                string (the default) draws nothing.
+            show_word_count: Draw the grey "Max words: N" caption above the
+                box (default True).
 
         Returns:
-            Dictionary containing operation results
+            Dict with success, field_name, dimensions, word_limit, has_label,
+            page, output size and the output path.
         """
         start_time = time.time()
 
@@ -315,12 +436,12 @@ class AdvancedFormsMixin(MCPMixin):
             # Create textarea field rectangle
             field_rect = pymupdf.Rect(x, y, x + width, y + height)
 
-            # Add textarea widget
-            widget = pdf_page.add_widget(pymupdf.Widget())
+            # Populate the Widget before adding it; see add_form_fields.
+            widget = pymupdf.Widget()
             widget.field_name = field_name
             widget.field_type = pymupdf.PDF_WIDGET_TYPE_TEXT
             widget.rect = field_rect
-            widget.update()
+            pdf_page.add_widget(widget)
 
             # Add word count indicator if requested
             if show_word_count:
@@ -360,7 +481,29 @@ class AdvancedFormsMixin(MCPMixin):
 
     @mcp_tool(
         name="add_date_field",
-        description="Add a date field with format validation to PDF"
+        description=(
+            "Add ONE text widget intended to hold a date, writing a NEW PDF "
+            "to output_path.\n"
+            "\n"
+            "NO validation is applied, despite the name. date_format is free "
+            "text interpolated verbatim into an optional grey \"Format: ...\" "
+            "caption drawn to the RIGHT of the box; the widget itself is an "
+            "ordinary AcroForm text field with no format action, so a reader "
+            "accepts anything typed into it and fill_form_pdf accepts any "
+            "string. If you need the value checked, run validate_form_data "
+            "with a `pattern` rule separately.\n"
+            "\n"
+            "Positioning is in PDF points from the page's BOTTOM-left origin: "
+            "the box spans (x, y) to (x+width, y+height), `label` is drawn 15 "
+            "points BELOW y (under the box), and the format caption sits 10 "
+            "points right of the box at half its height."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,
+            "openWorldHint": True,       # input_path may be an HTTPS URL
+        },
     )
     async def add_date_field(
         self,
@@ -377,23 +520,31 @@ class AdvancedFormsMixin(MCPMixin):
         show_format_hint: bool = True
     ) -> Dict[str, Any]:
         """
-        Add a date input field with format validation hints.
+        Add one text widget with an optional printed format hint.
 
         Args:
-            input_path: Path to input PDF file
-            output_path: Path where modified PDF will be saved
-            field_name: Name of the date field
-            x: X coordinate
-            y: Y coordinate
-            width: Field width
-            height: Field height
-            page: Page number (1-based)
-            date_format: Expected date format
-            label: Optional field label
-            show_format_hint: Whether to show format hint
+            input_path: Path to the source PDF, or an HTTPS URL to fetch.
+            output_path: Where to write the modified PDF. Overwritten if it
+                already exists; the source is never modified in place.
+            field_name: AcroForm field name for the widget. Used verbatim.
+            x: Left edge in PDF points from the page's bottom-left origin
+                (default 50).
+            y: Bottom edge in PDF points from the page's bottom-left origin
+                (default 100).
+            width: Box width in points (default 150).
+            height: Box height in points (default 25).
+            page: 1-based page number (default 1). Out of range is an error.
+            date_format: Free-text pattern shown in the caption, default
+                "MM/DD/YYYY". Purely cosmetic; it is not parsed and not
+                enforced, so any string is accepted here and in the field.
+            label: Caption drawn 15 points below y in 10pt black. Empty
+                string (the default) draws nothing.
+            show_format_hint: Draw the grey "Format: <date_format>" caption to
+                the right of the box (default True).
 
         Returns:
-            Dictionary containing operation results
+            Dict with success, field_name, date_format, dimensions, has_label,
+            has_format_hint, page, output size and the output path.
         """
         start_time = time.time()
 
@@ -424,12 +575,12 @@ class AdvancedFormsMixin(MCPMixin):
             # Create date field rectangle
             field_rect = pymupdf.Rect(x, y, x + width, y + height)
 
-            # Add date input widget
-            widget = pdf_page.add_widget(pymupdf.Widget())
+            # Populate the Widget before adding it; see add_form_fields.
+            widget = pymupdf.Widget()
             widget.field_name = field_name
             widget.field_type = pymupdf.PDF_WIDGET_TYPE_TEXT
             widget.rect = field_rect
-            widget.update()
+            pdf_page.add_widget(widget)
 
             # Add format hint if requested
             if show_format_hint:
@@ -470,7 +621,43 @@ class AdvancedFormsMixin(MCPMixin):
 
     @mcp_tool(
         name="validate_form_data",
-        description="Validate form data against rules and constraints"
+        description=(
+            "Check a JSON payload of field values against a JSON payload of "
+            "rules. Read-only: nothing is written.\n"
+            "\n"
+            "This is PURE DATA validation. pdf_path is opened only far enough "
+            "to validate the path; the document's form fields are NEVER read, "
+            "so nothing here confirms that a field name exists in the PDF or "
+            "that its type matches. Call extract_form_data first to learn the "
+            "real names. For the coordinate-overlay (permit) field-definition "
+            "format, use validate_permit_form_data instead.\n"
+            "\n"
+            "`form_data` is a JSON object of field name -> value:\n"
+            '  {"applicant": "Jane Roe", "zip": "83702"}\n'
+            "`validation_rules` is a JSON object keyed by the SAME field "
+            "names, each holding any of exactly three rules:\n"
+            '  {"applicant": {"required": true, "max_length": 60},\n'
+            '   "zip": {"pattern": "^[0-9]{5}$"}}\n'
+            "  - \"required\" (bool): fails on a falsy value, so 0, false and "
+            '""  all count as empty.\n'
+            "  - \"max_length\" (int): compares len(str(value)).\n"
+            "  - \"pattern\" (regex string): applied with re.match, so it is "
+            "anchored at the START only and needs a trailing $ to pin the "
+            "end.\n"
+            "Any other rule key is ignored.\n"
+            "\n"
+            "Only fields PRESENT in form_data are examined. A \"required\" "
+            "rule for a field the caller omitted entirely never fires, so "
+            "this tool CANNOT detect a missing field. Rules naming fields "
+            "absent from form_data are ignored. The returned warnings list is "
+            "always empty. The default validation_rules of \"{}\" checks "
+            "nothing and reports every field valid."
+        ),
+        annotations={
+            "readOnlyHint": True,        # reads only, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def validate_form_data(
         self,
@@ -479,15 +666,26 @@ class AdvancedFormsMixin(MCPMixin):
         validation_rules: str = "{}"
     ) -> Dict[str, Any]:
         """
-        Validate form data against specified rules and constraints.
+        Validate a form-data payload against caller-supplied rules.
 
         Args:
-            pdf_path: Path to PDF with form fields
-            form_data: JSON string containing form data to validate
-            validation_rules: JSON string with validation rules
+            pdf_path: Path to a PDF, or an HTTPS URL to fetch. Only used to
+                validate the path and echo it back; its form fields are not
+                inspected and play no part in the result.
+            form_data: JSON object mapping field name to value, e.g.
+                {"applicant": "Jane Roe", "zip": "83702"}. Only the keys
+                present here are validated.
+            validation_rules: JSON object keyed by field name. Each value may
+                carry "required" (bool, fails on any falsy value),
+                "max_length" (int, against len(str(value))) and "pattern"
+                (regex applied with re.match, start-anchored only). Defaults
+                to "{}", which validates nothing.
 
         Returns:
-            Dictionary containing validation results
+            Dict with success, validation_summary (is_valid, total_fields,
+            valid_fields, invalid_fields, total_errors, total_warnings),
+            per-field results, the errors list, an always-empty warnings list
+            and the echoed file path.
         """
         start_time = time.time()
 

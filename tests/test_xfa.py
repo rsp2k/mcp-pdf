@@ -754,13 +754,18 @@ class TestXfaMcpTools:
         path = _damaged_copy(lambda raw: raw.replace(b"trailer", b"trailXX"))
         try:
             result = asyncio.run(mixin.extract_form_data(path))
-            assert result["success"] is False
             if result.get("xfa_detection_failed"):
+                assert result["success"] is False
                 assert "truncated or corrupt" in result["hint"]
             else:
                 # MuPDF recovered and found no widgets, which is a legitimate
-                # answer. What must NOT happen is a bare "document closed"
-                # with no explanation of either kind.
+                # answer — and a successful one, so success is not asserted
+                # here. What must NOT happen is a bare "document closed" with
+                # no explanation of either kind. Until 2026-09-21 that was
+                # exactly what came back, because the success return called
+                # len(doc) after doc.close(); this branch passed only because
+                # the bug it was written to catch was still present.
+                assert result.get("error") != "document closed"
                 assert "form_summary" in result or result.get("hint")
         finally:
             os.unlink(path)

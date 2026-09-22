@@ -635,21 +635,63 @@ class PermitFormMixin(MCPMixin):
 
     @mcp_tool(
         name="fill_permit_form",
-        description="""Fill a PDF form using coordinate-based overlay technique.
-
-This works with ANY PDF (scanned, flat, non-interactive) by drawing text and
-checkboxes at specified (x, y) coordinates, then merging with the template.
-
-Args:
-    template_path: Path to the PDF template file
-    form_data: JSON object with field names as keys and values to fill
-    field_definitions: Inline JSON with field coordinates (mutually exclusive with field_definitions_path)
-    field_definitions_path: Path to JSON file with field coordinates
-    output_path: Optional path to save filled PDF (if not provided, returns base64)
-
-Returns:
-    Dictionary with success status, filled PDF (base64 or path), and statistics
-"""
+        description=(
+            "Fill ANY PDF (scanned, flat, no AcroForm widgets at all) by "
+            "drawing text and X marks at caller-supplied coordinates and "
+            "merging that overlay onto the template. Use fill_form_pdf "
+            "instead when the PDF has real interactive fields; use "
+            "preview_field_positions to check your coordinates before "
+            "committing. Requires reportlab (pip install mcp-pdf[forms]).\n"
+            "\n"
+            "Supply coordinates through EXACTLY ONE of field_definitions "
+            "(inline JSON) or field_definitions_path (a local .json file). "
+            "Both, or neither, is an error. The shape is an object whose "
+            "`pages` maps a STRING page number to an array of field objects:\n"
+            '  {"version": "1.0", "template": "septic-permit.pdf",\n'
+            '   "pages": {"1": [\n'
+            '     {"name": "owner", "x": 90, "y": 148, "width": 220, '
+            '"height": 12, "type": "text", "font_size": 9},\n'
+            '     {"name": "is_repair", "x": 412, "y": 205, "type": '
+            '"checkbox"},\n'
+            '     {"name": "notes", "x": 72, "y": 430, "width": 460, '
+            '"type": "text", "multiline": true, "max_chars": 88}\n'
+            "   ]}}\n"
+            "\n"
+            "Per-field keys the code actually reads: name (REQUIRED; a field "
+            "with no name is silently dropped), x, y (both default 0), width "
+            "(150), height (12), type (\"text\"; only the literal "
+            "\"checkbox\" behaves differently, everything else draws text), "
+            "font_size (9), font_name (\"Helvetica\"), text_align (\"left\", "
+            "or \"center\"/\"right\"; anything else falls back to left), "
+            "max_chars, multiline, line_spacing (12), x_offset and y_offset "
+            "(0, nudges for fine alignment). A `required` key here is read "
+            "only by get_field_schema, NOT by this tool.\n"
+            "\n"
+            "COORDINATES ARE MEASURED FROM THE TOP-LEFT of the page, unlike "
+            "every other tool in this server, and the page is assumed to be "
+            "US Letter (612x792 points) because the overlay canvas and the "
+            "top-to-bottom conversion are both hardcoded to it. A4 or legal "
+            "templates will be misaligned.\n"
+            "\n"
+            "`form_data` is a JSON object keyed by those field names: "
+            '{"owner": "Jane Roe", "is_repair": true, "notes": "..."}. A '
+            "checkbox draws a bold X when its value is truthy and nothing "
+            "when falsy. A text field draws nothing for a falsy value, so "
+            '"" , 0 and false leave the space blank, yet any non-null value '
+            "still increments fields_filled: the count means \"supplied\", "
+            "not \"visibly drawn\". Wrapping happens only when BOTH multiline "
+            "and max_chars are set; with max_chars alone the text is "
+            "truncated with an ellipsis.\n"
+            "\n"
+            "Omitting output_path returns the whole PDF base64-encoded in the "
+            "response, which is large. Prefer passing output_path."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a PDF when output_path is given
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,      # same args produce the same output file
+            "openWorldHint": True,       # template_path may be an HTTPS URL
+        },
     )
     async def fill_permit_form(
         self,
@@ -659,7 +701,30 @@ Returns:
         field_definitions_path: Optional[str] = None,
         output_path: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Fill a PDF form using coordinate-based overlay technique."""
+        """Fill a PDF form using the coordinate-based overlay technique.
+
+        Args:
+            template_path: Path to the template PDF, or an HTTPS URL to fetch.
+                Never modified in place.
+            form_data: JSON object mapping field name to value, e.g.
+                {"owner": "Jane Roe", "is_repair": true}. Names must match
+                the "name" keys in the field definitions; unknown keys are
+                ignored. Must be a JSON object, not an array.
+            field_definitions: The field-definition document as an inline JSON
+                string. Mutually exclusive with field_definitions_path, and
+                exactly one of the two is required. Needs a top-level "pages"
+                object keyed by page number as a STRING.
+            field_definitions_path: Local filesystem path to a .json file
+                holding the same document. Not a URL, and it must exist.
+            output_path: Where to write the filled PDF. Overwritten if it
+                exists. When omitted, the PDF comes back as pdf_base64 in the
+                response instead of being written anywhere.
+
+        Returns:
+            Dict with success, pages_total, pages_filled, fields_filled,
+            fields_total and output_size_bytes, plus either output_path or
+            pdf_base64.
+        """
         start_time = time.time()
 
         try:
@@ -759,25 +824,60 @@ Returns:
 
     @mcp_tool(
         name="get_field_schema",
-        description="""Get field schema from field definitions for validation or UI generation.
-
-Returns a list of all fields with their names, types, pages, and constraints.
-Useful for building dynamic forms or validating data before filling.
-
-Args:
-    field_definitions: Inline JSON with field definitions
-    field_definitions_path: Path to JSON file with field definitions
-
-Returns:
-    Dictionary with field schema including names, types, pages, and constraints
-"""
+        description=(
+            "Summarise a permit-form field-definition document: every field's "
+            "name, type, page and constraints, sorted by page then name, with "
+            "a per-type histogram. Read-only, and it never opens a PDF: it "
+            "reads ONLY the definition JSON, so it tells you what the "
+            "definitions claim, not what the template looks like. To inspect "
+            "a PDF's own interactive fields use extract_form_data; to see the "
+            "boxes drawn on the template use preview_field_positions.\n"
+            "\n"
+            "Supply the document through EXACTLY ONE of field_definitions "
+            "(inline JSON) or field_definitions_path (a local .json file); "
+            "both, or neither, is an error. Same shape fill_permit_form "
+            "consumes:\n"
+            '  {"version": "1.0", "template": "septic-permit.pdf",\n'
+            '   "pages": {"1": [{"name": "owner", "type": "text", '
+            '"required": true, "max_chars": 60}]}}\n'
+            "\n"
+            "Only five per-field keys reach the output here: name, type "
+            "(default \"text\"), required (default false), and max_chars and "
+            "multiline, each included only when truthy. Geometry and text "
+            "tuning keys are NOT reported. Note that `required` is honoured "
+            "by this tool alone; the rest of the pipeline ignores it.\n"
+            "\n"
+            "Every field needs a \"name\": a field object without one sorts "
+            "as null and can fail the call outright."
+        ),
+        annotations={
+            "readOnlyHint": True,        # reads JSON only, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": False,      # local JSON path only, no URL fetch
+        },
     )
     async def get_field_schema(
         self,
         field_definitions: Optional[str] = None,
         field_definitions_path: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Get field schema from field definitions."""
+        """Summarise a permit-form field-definition document.
+
+        Args:
+            field_definitions: The field-definition document as an inline JSON
+                string. Mutually exclusive with field_definitions_path;
+                exactly one of the two is required. Needs a top-level "pages"
+                object keyed by page number as a STRING. Optional "version"
+                and "template" strings are echoed back, defaulting to
+                "unknown".
+            field_definitions_path: Local filesystem path to a .json file
+                holding the same document. Not a URL, and it must exist.
+
+        Returns:
+            Dict with success, version, template, total_fields, total_pages,
+            a field_types histogram and fields, each entry carrying name,
+            type, page, required and, when set, max_chars and multiline.
+        """
         start_time = time.time()
 
         try:
@@ -839,21 +939,38 @@ Returns:
 
     @mcp_tool(
         name="validate_permit_form_data",
-        description="""Validate form data against field definitions before filling.
-
-Checks for:
-- Missing required fields
-- Extra fields not in schema
-- Type mismatches (checkbox vs text)
-
-Args:
-    form_data: JSON object with field names and values
-    field_definitions: Inline JSON with field definitions
-    field_definitions_path: Path to JSON file with field definitions
-
-Returns:
-    Validation results with missing, extra, and invalid fields
-"""
+        description=(
+            "Compare a permit form_data payload against a field-definition "
+            "document before calling fill_permit_form. Read-only, and no PDF "
+            "is opened. For the rules-based validator that takes a PDF path "
+            "and its own rule objects, use validate_form_data instead.\n"
+            "\n"
+            "Supply the definitions through EXACTLY ONE of field_definitions "
+            "or field_definitions_path; both, or neither, is an error. Same "
+            "shape fill_permit_form consumes, with the field names under "
+            "`pages`.\n"
+            "\n"
+            "What it genuinely reports:\n"
+            "  - fields defined in the schema but absent from form_data, as "
+            "missing_optional\n"
+            "  - keys in form_data that no field defines, as extra_fields\n"
+            "  - checkbox values that are not booleans, as type_errors. The "
+            "accepted set is exactly true, false, 0, 1, \"true\" and "
+            '"false"; the strings "True", "TRUE", "yes" and "1" are '
+            "REJECTED. Text fields are not type-checked at all.\n"
+            "\n"
+            "KNOWN GAP: missing_required is ALWAYS EMPTY. The `required` flag "
+            "on a field definition is dropped when the coordinate index is "
+            "built, so this tool cannot see it and never reports a missing "
+            "required field. `valid` is therefore true whenever there are no "
+            "checkbox type errors, however much is missing. Read required "
+            "flags from get_field_schema and check them yourself."
+        ),
+        annotations={
+            "readOnlyHint": True,        # compares JSON payloads, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": False,      # local JSON path only, no URL fetch
+        },
     )
     async def validate_permit_form_data(
         self,
@@ -861,7 +978,24 @@ Returns:
         field_definitions: Optional[str] = None,
         field_definitions_path: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Validate form data against field definitions."""
+        """Compare a form_data payload against a field-definition document.
+
+        Args:
+            form_data: JSON object mapping field name to value, e.g.
+                {"owner": "Jane Roe", "is_repair": true}. Must be a JSON
+                object, not an array.
+            field_definitions: The field-definition document as an inline JSON
+                string. Mutually exclusive with field_definitions_path;
+                exactly one of the two is required. Only the "pages" object
+                and each field's "name" and "type" are consulted.
+            field_definitions_path: Local filesystem path to a .json file
+                holding the same document. Not a URL, and it must exist.
+
+        Returns:
+            Dict with success, valid, total_schema_fields, total_data_fields,
+            fields_matched, missing_required (always empty, see the tool
+            description), missing_optional, extra_fields and type_errors.
+        """
         start_time = time.time()
 
         try:
@@ -941,24 +1075,34 @@ Returns:
 
     @mcp_tool(
         name="preview_field_positions",
-        description="""Generate a preview PDF showing field positions overlaid on template.
-
-Creates a visualization with:
-- Red rectangles showing field boundaries
-- Field names as labels
-- Page numbers
-
-Useful for debugging field coordinate alignment.
-
-Args:
-    template_path: Path to the PDF template file
-    field_definitions: Inline JSON with field definitions
-    field_definitions_path: Path to JSON file with field definitions
-    output_path: Optional path to save preview PDF
-
-Returns:
-    Preview PDF with field positions visualized
-"""
+        description=(
+            "Write a NEW proofing PDF that draws each defined field as a "
+            "red-outlined box on the real template, captioned with "
+            '"<name> (<type>)" in 6pt above the box. This is the tool for '
+            "debugging coordinate alignment: run it, look at the result, "
+            "adjust x/y, repeat, and only then call fill_permit_form. It "
+            "draws NO form_data, so it takes none. Requires reportlab (pip "
+            "install mcp-pdf[forms]).\n"
+            "\n"
+            "Supply the definitions through EXACTLY ONE of field_definitions "
+            "or field_definitions_path; both, or neither, is an error. Same "
+            "shape fill_permit_form consumes. Boxes come from each field's "
+            "x, y, width (default 150) and height (default 12); "
+            "x_offset/y_offset are deliberately NOT applied here, so a field "
+            "tuned with offsets prints slightly off from where its text will "
+            "actually land.\n"
+            "\n"
+            "Like fill_permit_form, y is measured from the TOP of the page "
+            "and US Letter (612x792) is assumed. Pages carrying no defined "
+            "fields are copied through unmarked. Omitting output_path returns "
+            "the whole PDF base64-encoded in the response, which is large."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a PDF when output_path is given
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,
+            "openWorldHint": True,       # template_path may be an HTTPS URL
+        },
     )
     async def preview_field_positions(
         self,
@@ -967,7 +1111,25 @@ Returns:
         field_definitions_path: Optional[str] = None,
         output_path: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Generate a preview PDF showing field positions."""
+        """Generate a proofing PDF showing where each defined field sits.
+
+        Args:
+            template_path: Path to the template PDF, or an HTTPS URL to fetch.
+                Never modified in place.
+            field_definitions: The field-definition document as an inline JSON
+                string. Mutually exclusive with field_definitions_path;
+                exactly one of the two is required. Only "pages" and each
+                field's name, x, y, width, height and type are used.
+            field_definitions_path: Local filesystem path to a .json file
+                holding the same document. Not a URL, and it must exist.
+            output_path: Where to write the preview PDF. Overwritten if it
+                exists. When omitted, the PDF comes back as pdf_base64 in the
+                response instead of being written anywhere.
+
+        Returns:
+            Dict with success, total_pages, total_fields, and either
+            output_path or pdf_base64.
+        """
         start_time = time.time()
 
         try:
@@ -1068,40 +1230,71 @@ Returns:
 
     @mcp_tool(
         name="insert_attachment_pages",
-        description="""Insert attachment pages (images or text) into a PDF document.
-
-Creates new pages with attachments and optionally adds "See page X" annotations
-at specified field positions to reference the inserted pages.
-
-Attachment JSON format:
-[
-  {
-    "name": "field_name",           // Field name for tracking
-    "page_title": "Site Photo",     // Title shown in header
-    "insert_after_page": 2,         // Page to insert after (null = end)
-    "content_type": "image",        // "image" or "text"
-    "image_path": "/path/to/img",   // For images: path to image file
-    "image_base64": "...",          // OR base64-encoded image data
-    "text_content": "...",          // For text: the text to display
-    "image_fit": "contain",         // "contain", "cover", or "stretch"
-    "show_header": true,            // Show title header
-    "add_reference": true,          // Add "See page X" at field position
-    "field_page": 1,                // Page for "See page X" annotation
-    "field_x": 100,                 // X position for annotation
-    "field_y": 200,                 // Y position (from top)
-    "field_width": 80,              // Annotation width
-    "field_height": 14              // Annotation height
-  }
-]
-
-Args:
-    source_pdf_path: Path to the PDF to modify
-    attachments: JSON array of attachment configurations
-    output_path: Optional path to save output (else returns base64)
-
-Returns:
-    Modified PDF with attachment pages inserted
-"""
+        description=(
+            "Build extra US-Letter pages holding an image or a block of text "
+            "and splice them into an existing PDF, writing a NEW PDF. Each "
+            "attachment can also stamp a small \"<title> - See page N\" box "
+            "onto an existing page so the form points at its exhibit. Use "
+            "merge_pdfs to join whole documents instead. Requires reportlab "
+            "(pip install mcp-pdf[forms]).\n"
+            "\n"
+            "`attachments` is a JSON ARRAY of objects (this example is valid "
+            "JSON, with no comments):\n"
+            '  [{"name": "site_photo", "page_title": "Site Photo",\n'
+            '    "insert_after_page": 2, "content_type": "image",\n'
+            '    "image_path": "/tmp/site.jpg", "image_fit": "contain",\n'
+            '    "show_header": true, "add_reference": true,\n'
+            '    "field_page": 1, "field_x": 380, "field_y": 512,\n'
+            '    "field_width": 90, "field_height": 14},\n'
+            '   {"name": "narrative", "page_title": "Installer Narrative",\n'
+            '    "insert_after_page": null, "content_type": "text",\n'
+            '    "text_content": "Trench depth 36in..."}]\n'
+            "\n"
+            "Keys the code reads. name defaults to attachment_<index> and is "
+            "only a label. page_title defaults to name and is drawn centred "
+            "at the top when show_header is true (default true). "
+            "content_type is \"image\" or \"text\" (default \"image\"); any "
+            "other value fails that one attachment.\n"
+            "\n"
+            "For an image, supply image_base64 OR image_path (base64 wins if "
+            "both are present; image_path is a plain local file, not a URL) "
+            "and optionally image_fit: contain (default, whole image inside "
+            "the margins), cover (fills and crops) or stretch (distorts). An "
+            "unrecognised value falls back to contain, and an image that will "
+            "not decode yields a page printing the error rather than failing "
+            "the call. For text, supply text_content (default \"\"), wrapped "
+            "at 85 characters in 11pt. ONLY ONE PAGE is ever taken per "
+            "attachment, so text longer than a page is silently truncated: "
+            "split it yourself.\n"
+            "\n"
+            "insert_after_page is 1-based and names the EXISTING page to "
+            "follow. Use null for end-of-document. Two traps: 0 is also "
+            "treated as end-of-document rather than \"before page 1\", and a "
+            "number GREATER than the document's page count is silently "
+            "dropped, still counted in pages_inserted but absent from the "
+            "output, so check total_pages.\n"
+            "\n"
+            "add_reference (default false) draws the \"See page N\" box and "
+            "needs field_page, the 1-based existing page to stamp; nothing is "
+            "drawn without it. field_x/field_y default to 100/100, "
+            "field_width to 80 and field_height to 14, all in points with y "
+            "measured from the TOP of the page, matching fill_permit_form. "
+            "The referenced page number is computed assuming this is the "
+            "first attachment landing after that page, so it can be off when "
+            "several attachments share one insertion point; trust "
+            "inserted_page_numbers in the response.\n"
+            "\n"
+            "A single bad attachment does NOT fail the call: success stays "
+            "true and that entry appears in the attachments array with "
+            "status \"error\". Omitting output_path returns the whole PDF "
+            "base64-encoded in the response, which is large."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a PDF when output_path is given
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,
+            "openWorldHint": True,       # source_pdf_path may be an HTTPS URL
+        },
     )
     async def insert_attachment_pages(
         self,
@@ -1109,7 +1302,41 @@ Returns:
         attachments: str,
         output_path: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Insert attachment pages into a PDF document."""
+        """Insert image or text attachment pages into a PDF document.
+
+        Args:
+            source_pdf_path: Path to the PDF to extend, or an HTTPS URL to
+                fetch. Never modified in place.
+            attachments: JSON array of attachment objects. Each may carry:
+                - "name": label used in the results (default
+                          "attachment_<index>")
+                - "page_title": header text (default: name)
+                - "insert_after_page": 1-based existing page to follow; null
+                          or 0 means end of document. A value past the last
+                          page is silently dropped.
+                - "content_type": "image" or "text" (default "image")
+                - "image_base64" / "image_path": image source; base64 takes
+                          precedence, image_path must be a local file
+                - "image_fit": "contain" (default) | "cover" | "stretch"
+                - "text_content": body text for a text page (default "")
+                - "show_header": draw the title header (default True)
+                - "add_reference": stamp "See page N" on an existing page
+                          (default False)
+                - "field_page": 1-based page to stamp; required for
+                          add_reference to do anything
+                - "field_x", "field_y": box position in points, y from the
+                          TOP of the page (defaults 100, 100)
+                - "field_width", "field_height": box size (defaults 80, 14)
+            output_path: Where to write the resulting PDF. Overwritten if it
+                exists. When omitted, the PDF comes back as pdf_base64 in the
+                response instead of being written anywhere.
+
+        Returns:
+            Dict with success, original_pages, pages_inserted, total_pages,
+            a per-attachment attachments list (status success or error),
+            inserted_page_numbers, output_size_bytes, and either output_path
+            or pdf_base64.
+        """
         start_time = time.time()
 
         try:

@@ -31,7 +31,39 @@ class MiscToolsMixin(MCPMixin):
 
     @mcp_tool(
         name="extract_links",
-        description="Extract all links from PDF with comprehensive filtering and analysis options"
+        description=(
+            "List the hyperlinks in a PDF with their page, rectangle, target "
+            "and type, plus a domain rollup and the email addresses found. "
+            "Read-only: nothing is written and the file is not modified.\n"
+            "\n"
+            "It reads real PDF LINK ANNOTATIONS, the clickable regions. A "
+            "URL that merely appears as text with no link attached to it is "
+            "NOT returned — use extract_text and scan the text yourself for "
+            "those.\n"
+            "\n"
+            "Three link kinds are reported: 'external' for http/https URLs "
+            "(with `url`), 'email' for mailto: targets (with `email`), and "
+            "'internal' for jumps within the document (with `target_page`, "
+            "1-based). The three include_* flags switch those off "
+            "individually; all default to true. Anything else — launch, "
+            "remote-file and named actions — comes back as type 'other' and "
+            "is ALWAYS included no matter how the flags are set. Note that a "
+            "URL with some other scheme (ftp:, file:) is dropped entirely "
+            "and appears in no category.\n"
+            "\n"
+            "`pages` is a plain comma/range STRING of 1-based page numbers, "
+            "NOT JSON: \"3\", \"1,3,5\", \"2-7\", or mixed \"1,4-6,9\"; "
+            "ranges are inclusive. Omit it for the whole document. Careful: "
+            "if the string is malformed, or names only pages that do not "
+            "exist, this tool SILENTLY FALLS BACK to scanning every page "
+            "instead of failing — check links_summary.pages_analyzed to see "
+            "what it really looked at."
+        ),
+        annotations={
+            "readOnlyHint": True,        # reads only, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def extract_links(
         self,
@@ -45,14 +77,22 @@ class MiscToolsMixin(MCPMixin):
         Extract all hyperlinks from PDF with comprehensive filtering.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
-            pages: Page numbers to analyze (comma-separated, 1-based), None for all
-            include_internal: Whether to include internal PDF links
-            include_external: Whether to include external URLs
-            include_email: Whether to include email links
+            pdf_path: Path to the PDF, or an HTTPS URL to fetch.
+            pages: Comma/range string of 1-based page numbers, e.g.
+                "1,4-6,9". Ranges are inclusive. None (the default) scans
+                every page, as does an unparseable or out-of-range string.
+            include_internal: Keep same-document jump links (type
+                "internal"). Default true.
+            include_external: Keep http/https links (type "external").
+                Default true.
+            include_email: Keep mailto: links (type "email"). Default true.
 
         Returns:
-            Dictionary containing extracted links and analysis
+            Dict with success, links_summary (total_links, per-type counts,
+            pages_with_links, pages_analyzed), the links list with page,
+            coordinates, type and target, link_analysis (top_domains,
+            unique_domains, email_addresses) and the filter settings used.
+            Links of type "other" ignore the include_* flags.
         """
         start_time = time.time()
 
@@ -184,7 +224,44 @@ class MiscToolsMixin(MCPMixin):
 
     @mcp_tool(
         name="extract_charts",
-        description="Extract and analyze charts, diagrams, and visual elements from PDF"
+        description=(
+            "SURVEY a PDF's visual elements and guess which of them are "
+            "charts or diagrams. Despite the name it EXTRACTS NOTHING and "
+            "WRITES NO FILES: you get an inventory — page, kind, dimensions "
+            "and a likely_chart flag per element — and no image data at "
+            "all. Use it to find WHICH pages are worth looking at, then "
+            "fetch them with a tool that actually produces files: "
+            "extract_images for the embedded bitmaps, "
+            "extract_vector_graphics for SVG line art and schematics, or "
+            "convert_to_images to render whole pages.\n"
+            "\n"
+            "Two kinds of element are counted. Embedded raster images are "
+            "measured in PIXELS and flagged likely_chart when they are "
+            "wider than 200 and taller than 150, or larger than 50,000 px "
+            "in area. Vector drawings are only considered at all if they "
+            "have more than 10 path items, are measured in PDF POINTS, and "
+            "are flagged likely_chart when they have more than 20 items and "
+            "exceed 200 wide or 150 tall.\n"
+            "\n"
+            "The judgement is PURE GEOMETRY — nothing reads the content — so "
+            "a photograph, a full-page scan or a large logo is happily "
+            "reported as a likely chart, and a small tidy bar chart is "
+            "missed. Treat likely_chart as 'big enough to be worth a look'.\n"
+            "\n"
+            "min_size (default 100) is the floor for an element to be listed "
+            "at all, applied to width OR height, and it is unhelpfully "
+            "compared against PIXELS for images but POINTS for drawings; "
+            "lower it to catch small figures, raise it to cut noise. "
+            "`pages` is a plain comma/range STRING of 1-based page numbers, "
+            "NOT JSON: \"3\", \"1,3,5\", \"2-7\", \"1,4-6,9\". A malformed "
+            "or out-of-range string SILENTLY falls back to the whole "
+            "document, so check chart_analysis.pages_analyzed."
+        ),
+        annotations={
+            "readOnlyHint": True,        # inventories only, extracts nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def extract_charts(
         self,
@@ -193,15 +270,23 @@ class MiscToolsMixin(MCPMixin):
         min_size: int = 100
     ) -> Dict[str, Any]:
         """
-        Extract and analyze charts and visual elements from PDF.
+        Inventory and score the visual elements in a PDF. Writes nothing.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
-            pages: Page numbers to analyze (comma-separated, 1-based), None for all
-            min_size: Minimum size (width or height) for visual elements
+            pdf_path: Path to the PDF, or an HTTPS URL to fetch.
+            pages: Comma/range string of 1-based page numbers, e.g.
+                "1,4-6,9". Ranges are inclusive. None (the default) scans
+                every page, as does an unparseable or out-of-range string.
+            min_size: Minimum width or height for an element to be listed,
+                default 100. Pixels for embedded images, PDF points for
+                vector drawings.
 
         Returns:
-            Dictionary containing chart analysis results
+            Dict with success, chart_analysis (total_visual_elements,
+            likely_charts, pages_with_visuals, pages_analyzed,
+            chart_density), size_distribution bucketed by area (small
+            <20000, medium <100000, large >=100000), the visual_elements
+            inventory, and plain-language insights. No files are produced.
         """
         start_time = time.time()
 
@@ -341,7 +426,41 @@ class MiscToolsMixin(MCPMixin):
 
     @mcp_tool(
         name="add_field_validation",
-        description="Add validation rules to existing form fields"
+        description=(
+            "Attach input constraints to the AcroForm fields of an existing "
+            "PDF, writing a NEW PDF to output_path. It changes the FORM "
+            "ITSELF so a person typing into it is constrained; it does not "
+            "check any data. To check values you already have against rules, "
+            "use validate_form_data (pure data, writes nothing). To put "
+            "values INTO the form, use fill_form_pdf.\n"
+            "\n"
+            "`validation_rules` is a JSON OBJECT keyed by EXACT form field "
+            "name (not an array), each mapping to a rules object:\n"
+            '  {"applicant_name": {"max_length": 40},\n'
+            '   "parcel_id":      {"max_length": 12, "required": true}}\n'
+            "\n"
+            "ONLY TWO KEYS ARE READ, and only one of them does anything:\n"
+            "  max_length (int) — really applied, caps the characters the "
+            "field will accept\n"
+            "  required (bool)  — counted in the response but NOT enforced "
+            "in the output PDF; it sets no flag a reader honours\n"
+            "Any other key (pattern, min_length, type, format...) is ignored "
+            "silently. So this tool is effectively a max-length setter "
+            "today, and the output is a valid PDF either way.\n"
+            "\n"
+            "Get the field names from extract_form_data first: a name that "
+            "does not match a real field is skipped without error, and "
+            "validation_summary.fields_processed will simply be lower than "
+            "your rule count. Only classic AcroForm text widgets can be "
+            "changed — dynamic XFA forms have no widgets to touch (check "
+            "with is_xfa_pdf)."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,      # same args produce the same output file
+            "openWorldHint": True,       # input_path may be an HTTPS URL
+        },
     )
     async def add_field_validation(
         self,
@@ -350,15 +469,25 @@ class MiscToolsMixin(MCPMixin):
         validation_rules: str
     ) -> Dict[str, Any]:
         """
-        Add validation rules to existing PDF form fields.
+        Add input constraints to existing PDF AcroForm fields.
 
         Args:
-            input_path: Path to input PDF with form fields
-            output_path: Path where validated PDF will be saved
-            validation_rules: JSON string with validation rules
+            input_path: Path to the source PDF with form fields, or an HTTPS
+                URL to fetch.
+            output_path: Where to write the modified PDF. Overwritten if it
+                exists; the source is never modified in place.
+            validation_rules: JSON object mapping exact field name to a rules
+                object. Recognised keys are "max_length" (applied) and
+                "required" (counted only, not enforced); everything else is
+                ignored.
+                Example: {"parcel_id": {"max_length": 12}}
 
         Returns:
-            Dictionary containing validation setup results
+            Dict with success, validation_summary (fields_processed,
+            rules_applied, validation_rules_count, output size),
+            applied_rules listing the field names you supplied, and the
+            output path. fields_processed lower than your rule count means
+            some names did not match a real field.
         """
         start_time = time.time()
 
@@ -444,7 +573,43 @@ class MiscToolsMixin(MCPMixin):
 
     @mcp_tool(
         name="merge_pdfs_advanced",
-        description="Advanced PDF merging with bookmark preservation and options"
+        description=(
+            "Concatenate two or more PDFs into one NEW PDF at output_path, "
+            "CARRYING THE SOURCE BOOKMARKS ACROSS. That is the whole reason "
+            "to choose this over merge_pdfs, which is otherwise identical "
+            "but throws every bookmark away. If none of the sources have "
+            "bookmarks and you do not want a contents page, merge_pdfs is "
+            "the simpler call.\n"
+            "\n"
+            "`input_paths` is a JSON array of path strings, in the order you "
+            "want them concatenated:\n"
+            '  ["/docs/part1.pdf", "/docs/part2.pdf"]\n'
+            "AT LEAST TWO paths are required. Each may be a local path or an "
+            "HTTPS URL. A source that fails to open aborts the whole call "
+            "and writes nothing.\n"
+            "\n"
+            "preserve_bookmarks (default true) rebuilds a combined outline "
+            "with each entry's page number shifted to its new position, and "
+            "PREFIXES every title with its source filename, so 'Chapter 1' "
+            "from part1.pdf becomes 'part1.pdf: Chapter 1'. Set it false for "
+            "unprefixed titles, which discards the outline entirely.\n"
+            "\n"
+            "include_toc (default false) inserts one extra page at the very "
+            "front listing each source file and its PAGE COUNT, as plain "
+            "text with no clickable links. It is a cover sheet, not a real "
+            "index; the bookmark outline above is the navigable one and "
+            "stays correct when both options are used together.\n"
+            "\n"
+            "add_page_numbers is accepted but NOT IMPLEMENTED: no page "
+            "numbers are stamped on anything. It is echoed back in "
+            "merge_features and otherwise ignored, so do not rely on it."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,      # same inputs produce the same output file
+            "openWorldHint": True,       # entries in input_paths may be HTTPS URLs
+        },
     )
     async def merge_pdfs_advanced(
         self,
@@ -455,17 +620,26 @@ class MiscToolsMixin(MCPMixin):
         include_toc: bool = False
     ) -> Dict[str, Any]:
         """
-        Advanced PDF merging with bookmark preservation and additional options.
+        Merge PDFs, carrying the source bookmark outlines into the result.
 
         Args:
-            input_paths: JSON string containing list of PDF file paths
-            output_path: Path where merged PDF will be saved
-            preserve_bookmarks: Whether to preserve original bookmarks
-            add_page_numbers: Whether to add page numbers to merged document
-            include_toc: Whether to generate table of contents
+            input_paths: JSON array of PDF paths (local paths or HTTPS URLs)
+                in concatenation order. Minimum of 2 entries.
+                Example: ["/tmp/part1.pdf", "/tmp/part2.pdf"]
+            output_path: Where to write the merged PDF. Overwritten if it
+                exists; the sources are never modified.
+            preserve_bookmarks: Carry each source's outline across with
+                page numbers rewritten and titles prefixed by source
+                filename. Default true.
+            add_page_numbers: Ignored — not implemented. Nothing is stamped.
+            include_toc: Prepend a plain-text cover page listing each source
+                file and its page count. No links. Default false.
 
         Returns:
-            Dictionary containing advanced merge results
+            Dict with success, merge_summary (input_files,
+            total_pages_merged, bookmarks_preserved, toc_generated, output
+            size), per-input file_info including has_bookmarks,
+            merge_features echoing the options, and the output path.
         """
         start_time = time.time()
 
@@ -553,7 +727,10 @@ class MiscToolsMixin(MCPMixin):
             if include_toc and file_info:
                 # Insert a new page at the beginning for TOC
                 toc_page = merged_doc.new_page(0)
-                toc_page.insert_text((50, 50), "Table of Contents", fontsize=16, fontname="helv-bold")
+                # "hebo" is PyMuPDF's base-14 name for Helvetica-Bold.
+                # "helv-bold" is not a recognized name and raises
+                # "need font file or buffer", which failed the whole merge.
+                toc_page.insert_text((50, 50), "Table of Contents", fontsize=16, fontname="hebo")
 
                 y_pos = 100
                 for info in file_info:
@@ -606,7 +783,53 @@ class MiscToolsMixin(MCPMixin):
 
     @mcp_tool(
         name="split_pdf_by_pages",
-        description="Split PDF into separate files by page ranges"
+        description=(
+            "Split a PDF into several new PDFs at PAGE RANGES YOU CHOOSE, "
+            "written into an output_directory you choose (created if it does "
+            "not exist) with filenames you control. This is the splitting "
+            "tool to reach for by default. Prefer split_pdf_by_bookmarks "
+            "when the document's own outline already marks the boundaries, "
+            "split_pdf_by_structure when it has visible headings but no "
+            "bookmarks, and reorder_pdf_pages when you want the selected "
+            "pages in ONE file rather than several.\n"
+            "\n"
+            "`page_ranges` MUST BE A JSON ARRAY OF STRINGS. Quote every "
+            "element, and keep the outer brackets even for a single range:\n"
+            '  \'["1-5", "6-10", "11-end"]\'   three files\n'
+            '  \'["1-1"]\'                      just page 1, as one file\n'
+            '  \'["7"]\'                        also just page 7\n'
+            '  \'["1-3", "1-3"]\'               overlaps are allowed\n'
+            "\n"
+            "These all FAIL, and they are the easy mistakes to make:\n"
+            "  \"1\"      -> parses as the number 1, not a list: "
+            "\"'int' object is not iterable\"\n"
+            "  \"1-1\"    -> not JSON at all: \"Invalid JSON in "
+            "page_ranges\"\n"
+            "  '[1, 5]' -> array of NUMBERS; each element is skipped and "
+            "you get zero files with success still true\n"
+            "The element itself is a 1-BASED inclusive range 'first-last', "
+            "or a bare page number. The literal keyword 'end' is allowed as "
+            "the last page only, as in \"11-end\".\n"
+            "\n"
+            "Ranges that run past the document are CLAMPED rather than "
+            "rejected, so [\"50-60\"] on a 10-page PDF quietly yields one "
+            "file holding page 10. A range whose text will not parse is "
+            "skipped and the call still reports success, so always compare "
+            "split_summary.files_created with ranges_requested.\n"
+            "\n"
+            "naming_pattern understands exactly three placeholders: {start} "
+            "and {end} (the resolved 1-based page numbers) and {index} (the "
+            "range's position, starting at 1). Default "
+            "\"page_{start}-{end}.pdf\". Any OTHER placeholder makes that "
+            "file silently fail, and two ranges that resolve to the same "
+            "filename overwrite each other."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes one new PDF per range
+            "destructiveHint": True,     # clobbers same-named files in output_directory
+            "idempotentHint": True,      # same args rewrite the same set of files
+            "openWorldHint": True,       # input_path may be an HTTPS URL
+        },
     )
     async def split_pdf_by_pages(
         self,
@@ -619,13 +842,24 @@ class MiscToolsMixin(MCPMixin):
         Split PDF into separate files using specified page ranges.
 
         Args:
-            input_path: Path to input PDF file
-            output_directory: Directory where split files will be saved
-            page_ranges: JSON string with page ranges (e.g., ["1-5", "6-10", "11-end"])
-            naming_pattern: Pattern for output filenames
+            input_path: Path to the source PDF, or an HTTPS URL to fetch.
+            output_directory: Directory for the split files. Created along
+                with any missing parents.
+            page_ranges: JSON array of range STRINGS, 1-based and inclusive.
+                Each element is "first-last", a bare page number, or
+                "first-end" to run to the last page. Ranges beyond the
+                document are clamped, not rejected.
+                Example: ["1-5", "6-10", "11-end"]
+            naming_pattern: Output filename template. Only {start}, {end}
+                and {index} are substituted. Default
+                "page_{start}-{end}.pdf".
 
         Returns:
-            Dictionary containing split results
+            Dict with success, split_summary (input_pages, ranges_requested,
+            files_created, total size), split_files listing each written
+            file's name, path, page_range and page count, and the settings
+            used. files_created below ranges_requested means some ranges
+            were skipped.
         """
         start_time = time.time()
 
@@ -730,7 +964,50 @@ class MiscToolsMixin(MCPMixin):
 
     @mcp_tool(
         name="split_pdf_by_bookmarks",
-        description="Split PDF into separate files using bookmarks as breakpoints"
+        description=(
+            "Split a PDF at its own BOOKMARK (outline) entries, one new PDF "
+            "per bookmark, into an output_directory you choose (created if "
+            "missing). Each piece runs from its bookmark's page up to the "
+            "page before the next bookmark AT THE SAME LEVEL, and the last "
+            "piece runs to the end of the document.\n"
+            "\n"
+            "It REQUIRES a real embedded outline and fails with an error if "
+            "the PDF has none, or none at the level you asked for. When "
+            "there are no bookmarks but the pages do show headings, use "
+            "split_pdf_by_structure, which detects them (and can emit "
+            "markdown and images per section). Use split_pdf_by_pages when "
+            "you want to name the page ranges yourself, or split_pdf for the "
+            "zero-configuration level-1 split that writes beside the input "
+            "instead of into a directory you pick.\n"
+            "\n"
+            "bookmark_level matches the outline depth EXACTLY, it is not "
+            "'this level and above': 1 (the default) splits on top-level "
+            "chapters, 2 splits on their subsections only. Run "
+            "get_document_structure first if you are unsure what depths "
+            "exist.\n"
+            "\n"
+            "naming_pattern understands exactly two placeholders, {title} "
+            "and {index} (the 1-based position). Default \"{title}.pdf\". "
+            "{start} and {end} DO NOT WORK here and would silently skip the "
+            "file. The title is sanitised down to letters, digits, spaces, "
+            "hyphens and underscores and truncated to 50 characters, so "
+            "punctuation disappears and two chapters with similar names can "
+            "collide and overwrite each other — prefer something like "
+            "\"{index}_{title}.pdf\" for a clean set.\n"
+            "\n"
+            "Two things go missing quietly. Any pages BEFORE the first "
+            "bookmark (cover, front matter) end up in no output file at "
+            "all. And two bookmarks landing on the same page produce an "
+            "empty span that is skipped. Compare "
+            "split_summary.files_created with bookmarks_at_level to catch "
+            "both."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes one new PDF per bookmark
+            "destructiveHint": True,     # clobbers same-named files in output_directory
+            "idempotentHint": True,      # same args rewrite the same set of files
+            "openWorldHint": True,       # input_path may be an HTTPS URL
+        },
     )
     async def split_pdf_by_bookmarks(
         self,
@@ -740,16 +1017,25 @@ class MiscToolsMixin(MCPMixin):
         naming_pattern: str = "{title}.pdf"
     ) -> Dict[str, Any]:
         """
-        Split PDF using bookmarks as breakpoints.
+        Split PDF using its embedded bookmarks as breakpoints.
 
         Args:
-            input_path: Path to input PDF file
-            output_directory: Directory where split files will be saved
-            bookmark_level: Bookmark level to use as breakpoints (1 = top level)
-            naming_pattern: Pattern for output filenames
+            input_path: Path to the source PDF, or an HTTPS URL to fetch.
+                Must contain an embedded outline.
+            output_directory: Directory for the split files. Created along
+                with any missing parents.
+            bookmark_level: Exact outline depth to split on. 1 (default) is
+                top level, 2 is the next level down. Levels are not nested
+                together.
+            naming_pattern: Output filename template. Only {title} (the
+                sanitised bookmark text, max 50 chars) and {index} (1-based)
+                are substituted. Default "{title}.pdf".
 
         Returns:
-            Dictionary containing bookmark split results
+            Dict with success, split_summary (input_pages,
+            bookmarks_at_level, files_created, bookmark_level, total size),
+            split_files listing each file's name, path, bookmark_title,
+            page_range and page count, and the settings used.
         """
         start_time = time.time()
 

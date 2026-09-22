@@ -5,7 +5,7 @@ Uses official fastmcp.contrib.mcp_mixin pattern
 
 import time
 import json
-from typing import Dict, Any
+from typing import Any, Dict, Literal
 import logging
 
 # PDF processing libraries
@@ -30,7 +30,27 @@ class AnnotationsMixin(MCPMixin):
 
     @mcp_tool(
         name="add_sticky_notes",
-        description="Add sticky note annotations to PDF"
+        description=(
+            "Add collapsed sticky-note (text) annotations at given coordinates, "
+            "writing a NEW PDF to output_path. Reviewers see a note icon they "
+            "click to read the comment. Use add_highlights instead to mark up "
+            "existing text, and add_stamps for APPROVED/DRAFT-style overlays.\n"
+            "\n"
+            "`notes` is a JSON array of objects:\n"
+            '  [{"page": 1, "x": 100, "y": 200, "content": "Check this figure", '
+            '"author": "R. Malloy"}]\n'
+            "\n"
+            "page is 1-based (default 1). x/y are PDF points from the page's "
+            "BOTTOM-left origin, default 100/100. content defaults to \"Note\", "
+            "author to \"User\". Every field except the object itself is "
+            "optional, so a bare [{}] places a default note on page 1."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes a new PDF
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,      # same args produce the same output file
+            "openWorldHint": True,       # input_path may be an HTTPS URL
+        },
     )
     async def add_sticky_notes(
         self,
@@ -42,12 +62,21 @@ class AnnotationsMixin(MCPMixin):
         Add sticky note annotations to specific locations in PDF.
 
         Args:
-            input_path: Path to input PDF file
-            output_path: Path where annotated PDF will be saved
-            notes: JSON string containing note definitions
+            input_path: Path to the source PDF, or an HTTPS URL to fetch.
+            output_path: Where to write the annotated PDF. Overwritten if it
+                already exists; the source is never modified in place.
+            notes: JSON array of note objects. Each may carry:
+                - "page":    1-based page number (default 1)
+                - "x", "y":  position in PDF points from the bottom-left
+                             origin (defaults 100, 100)
+                - "content": the note text (default "Note")
+                - "author":  attribution shown in the PDF reader (default "User")
+                Example: [{"page": 1, "x": 72, "y": 700,
+                           "content": "Needs a citation", "author": "Reviewer"}]
 
         Returns:
-            Dictionary containing annotation results
+            Dict with success, highlight/annotation counts, any per-note errors,
+            and the output path.
         """
         start_time = time.time()
 
@@ -149,7 +178,33 @@ class AnnotationsMixin(MCPMixin):
 
     @mcp_tool(
         name="add_highlights",
-        description="Add text highlights to PDF"
+        description=(
+            "Highlight text in a PDF, writing a NEW PDF to output_path. Two "
+            "mutually exclusive modes per highlight:\n"
+            "\n"
+            "  by text (preferred) — searches the page and highlights EVERY "
+            'match:\n    [{"page": 1, "text": "net revenue", "color": "yellow"}]\n'
+            "  by rectangle — one explicit box; requires ALL FOUR of "
+            'x1/y1/x2/y2:\n    [{"page": 1, "x1": 72, "y1": 700, "x2": 300, '
+            '"y2": 715, "color": "green"}]\n'
+            "\n"
+            "An object with neither `text` nor all four coordinates is skipped "
+            "and reported in the errors list. Text search is literal, not "
+            "regex, and will not match across a line break. If the text is "
+            "absent the call still SUCCEEDS with highlights_added lower than "
+            "requested, so compare the counts rather than trusting success.\n"
+            "\n"
+            "page is 1-based (default 1). color is one of yellow, green, blue, "
+            "red, orange, pink (default yellow; an unrecognized name silently "
+            "falls back to yellow). Coordinates are PDF points measured from "
+            "the page's BOTTOM-left origin."
+        ),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,
+            "openWorldHint": True,       # input_path may be an HTTPS URL
+        },
     )
     async def add_highlights(
         self,
@@ -161,12 +216,25 @@ class AnnotationsMixin(MCPMixin):
         Add text highlights to specific areas in PDF.
 
         Args:
-            input_path: Path to input PDF file
-            output_path: Path where highlighted PDF will be saved
-            highlights: JSON string containing highlight definitions
+            input_path: Path to the source PDF, or an HTTPS URL to fetch.
+            output_path: Where to write the highlighted PDF. Overwritten if it
+                exists; the source is never modified in place.
+            highlights: JSON array of highlight objects. Each needs EITHER
+                "text" OR all four of "x1"/"y1"/"x2"/"y2":
+                - "page":  1-based page number (default 1)
+                - "text":  literal string to find; every match on that page
+                           gets highlighted. Not a regex, and will not span a
+                           line break.
+                - "x1","y1","x2","y2": explicit rectangle in PDF points from
+                           the bottom-left origin. All four required together.
+                - "color": yellow | green | blue | red | orange | pink
+                           (default yellow; unknown names fall back to yellow)
+                Example: [{"page": 2, "text": "Q3 shortfall", "color": "red"}]
 
         Returns:
-            Dictionary containing highlighting results
+            Dict with success, highlights_requested / highlights_added /
+            highlights_failed, per-highlight errors, and the output path. A
+            search string that matched nothing is counted, not raised.
         """
         start_time = time.time()
 
@@ -297,7 +365,28 @@ class AnnotationsMixin(MCPMixin):
 
     @mcp_tool(
         name="add_stamps",
-        description="Add approval stamps to PDF"
+        description=(
+            "Overlay status stamps (APPROVED, DRAFT, CONFIDENTIAL...) on a PDF, "
+            "writing a NEW PDF to output_path. For free-text comments use "
+            "add_sticky_notes; to mark up existing text use add_highlights.\n"
+            "\n"
+            '`stamps` is a JSON array:\n  [{"page": 1, "type": "APPROVED", '
+            '"x": 400, "y": 50, "size": "medium"}]\n'
+            "\n"
+            "type must be one of APPROVED, REJECTED, DRAFT, CONFIDENTIAL, "
+            "REVIEWED, FINAL, COPY (UPPERCASE; default APPROVED). Each carries "
+            "its own colour. size is small | medium | large, which is 80x30, "
+            "120x40 or 160x50 points (default medium). page is 1-based "
+            "(default 1). x/y position the stamp's lower-left corner in PDF "
+            "points from the page's BOTTOM-left origin, default 400/50, which "
+            "lands near the bottom-right of a Letter page."
+        ),
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
     )
     async def add_stamps(
         self,
@@ -309,12 +398,22 @@ class AnnotationsMixin(MCPMixin):
         Add approval stamps (Approved, Draft, Confidential, etc) to PDF.
 
         Args:
-            input_path: Path to input PDF file
-            output_path: Path where stamped PDF will be saved
-            stamps: JSON string containing stamp definitions
+            input_path: Path to the source PDF, or an HTTPS URL to fetch.
+            output_path: Where to write the stamped PDF. Overwritten if it
+                exists; the source is never modified in place.
+            stamps: JSON array of stamp objects. Each may carry:
+                - "page": 1-based page number (default 1)
+                - "type": APPROVED | REJECTED | DRAFT | CONFIDENTIAL |
+                          REVIEWED | FINAL | COPY, uppercase (default APPROVED)
+                - "x", "y": lower-left corner in PDF points from the page's
+                          bottom-left origin (defaults 400, 50)
+                - "size": small (80x30) | medium (120x40) | large (160x50),
+                          default medium
+                Example: [{"page": 1, "type": "CONFIDENTIAL", "size": "large"}]
 
         Returns:
-            Dictionary containing stamping results
+            Dict with success, stamp counts, per-stamp errors, the list of
+            available_stamp_types, and the output path.
         """
         start_time = time.time()
 
@@ -394,13 +493,18 @@ class AnnotationsMixin(MCPMixin):
                     text_annot.set_info(content=stamp_type.upper())
                     text_annot.update()
 
-                    # Add text using insert_text for better visibility
+                    # Add text using insert_text for better visibility.
+                    # "hebo" is PyMuPDF's base-14 name for Helvetica-Bold. The
+                    # original "helv-bold" is not a valid base-14 name and
+                    # raised "need font file or buffer"; an earlier fix in this
+                    # repo swapped it for plain "helv", which stopped the crash
+                    # but silently dropped the bold a stamp wants.
                     page.insert_text(
                         text_point,
                         stamp_type.upper(),
                         fontsize=12,
                         color=(1, 1, 1),  # White text
-                        fontname="helv"
+                        fontname="hebo"
                     )
 
                     stamps_added += 1
@@ -445,22 +549,37 @@ class AnnotationsMixin(MCPMixin):
 
     @mcp_tool(
         name="extract_all_annotations",
-        description="Extract all annotations from PDF"
+        description=(
+            "Read every annotation already present in a PDF (sticky notes, "
+            "highlights, stamps, ink, shapes) with its page, type, position, "
+            "author and text. Read-only: nothing is written and the file is "
+            "not modified. Use this to review a marked-up document, or to "
+            "collect reviewer comments into one place. Returns counts per "
+            "annotation type alongside the full list."
+        ),
+        annotations={
+            "readOnlyHint": True,        # reads only, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def extract_all_annotations(
         self,
         pdf_path: str,
-        export_format: str = "json"
+        export_format: Literal["json", "csv", "text"] = "json"
     ) -> Dict[str, Any]:
         """
         Extract all annotations (notes, highlights, stamps) from PDF.
 
         Args:
-            pdf_path: Path to PDF file
-            export_format: Output format ("json", "csv", "text")
+            pdf_path: Path to the PDF, or an HTTPS URL to fetch.
+            export_format: Shape of the returned annotation list. "json" gives
+                structured objects (the default, best for programmatic use),
+                "csv" a flat table, "text" a human-readable rendering.
 
         Returns:
-            Dictionary containing all annotations
+            Dict with success, the annotation list, per-type counts
+            (text/highlight/ink/square/circle/line...), and page totals.
         """
         start_time = time.time()
 

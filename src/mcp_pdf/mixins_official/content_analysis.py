@@ -4,7 +4,7 @@ Uses official fastmcp.contrib.mcp_mixin pattern
 """
 
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Literal, Optional
 import logging
 import re
 from collections import Counter
@@ -32,17 +32,69 @@ class ContentAnalysisMixin(MCPMixin):
 
     @mcp_tool(
         name="classify_content",
-        description="Classify and analyze PDF content type and structure"
+        description=(
+            "Guess what KIND of document this is — academic, business, legal, "
+            "technical, financial, medical or educational — and report reading "
+            "level, vocabulary diversity and rough word/image/link counts. "
+            "Read-only, writes nothing, samples the first 10 pages.\n"
+            "\n"
+            "classify_content answers \"what is this document?\"; "
+            "summarize_content answers \"what does it say?\" and returns actual "
+            "sentences and keywords. Ask this one first when routing a pile of "
+            "unknown PDFs, then summarize the ones that matter.\n"
+            "\n"
+            "ALWAYS CHECK confidence BEFORE USING primary_type. Classification "
+            "is a raw count of fixed keyword substrings per category, and "
+            "confidence is that category's SHARE of all keyword hits, not a "
+            "probability of being right. When the document matches no keyword "
+            "at all the scores are all zero and primary_type falls back to the "
+            "first category in the table, \"academic\", with confidence 0.0 — "
+            "so confidence 0.0 means \"unclassified\", not \"an academic paper\". "
+            "Anything under roughly 0.4 is a weak signal; compare against "
+            "secondary_types, which is a list of [category, raw_score] pairs "
+            "for the next three ranked categories.\n"
+            "\n"
+            "Other caveats: estimated_word_count, estimated_images and "
+            "estimated_links are extrapolated from the 10-page sample to the "
+            "full page count, not counted. readability_score is a modified "
+            "Flesch formula that substitutes sentence length for syllable "
+            "count, so treat reading_level as a coarse band. A HIGHER "
+            "readability_score means EASIER text (>=90 Elementary, >=70 Middle "
+            "School, >=50 High School, >=30 College, below that Graduate). On a "
+            "scanned PDF with no extractable text every figure here is "
+            "meaningless — run is_scanned_pdf first."
+        ),
+        annotations={
+            "readOnlyHint": True,        # opens the PDF, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def classify_content(self, pdf_path: str) -> Dict[str, Any]:
         """
         Classify PDF content type and analyze document structure.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
 
         Returns:
-            Dictionary containing content classification results
+            Dict with success plus:
+              - classification: primary_type (one of academic, business, legal,
+                technical, financial, medical, educational), confidence
+                (0.0-1.0 share of keyword hits; 0.0 means nothing matched),
+                secondary_types as [category, raw_score] pairs for ranks 2-4
+              - content_analysis: total_pages, estimated_word_count
+                (extrapolated), avg_words_per_page, vocabulary_diversity
+                (unique words over total words in the sample),
+                reading_level, readability_score (higher is easier)
+              - document_structure: has_bookmarks, bookmark_levels,
+                estimated_sections, is_structured
+              - multimedia_content: estimated_images, estimated_links (both
+                extrapolated), is_multimedia_rich
+              - content_characteristics: is_text_heavy (>500 words/page),
+                is_technical, has_formal_language, complexity_level
+                (high/medium/low from vocabulary_diversity)
+              - file_info.pages_analyzed: how many pages were actually sampled
         """
         start_time = time.time()
 
@@ -186,24 +238,71 @@ class ContentAnalysisMixin(MCPMixin):
 
     @mcp_tool(
         name="summarize_content",
-        description="Generate summary and key insights from PDF content"
+        description=(
+            "Pull representative sentences, frequent keywords, capitalised "
+            "topics, dates and numbers out of a PDF. Read-only, writes "
+            "nothing. Processes ALL pages by default, so pass `pages` on a long "
+            "document.\n"
+            "\n"
+            "This is EXTRACTIVE and purely statistical — no model is called, so "
+            "there is no abstractive prose and no paraphrase. If you want an "
+            "actual written summary, take the returned sentences and write it "
+            "yourself, or use extract_text and read the text. Use "
+            "classify_content instead to learn what kind of document this is.\n"
+            "\n"
+            "Two things about `summary.sentences` that will surprise you: only "
+            "the FIRST 50 SENTENCES of the selected pages are ever candidates, "
+            "so nothing from later in a long document can appear; and the "
+            "sentences are returned in DESCENDING SCORE ORDER, not document "
+            "order, so they do not read as a paragraph. Sentence count is 3 for "
+            "\"short\", 7 for \"medium\", 15 for \"long\".\n"
+            "\n"
+            "`pages` is a 1-based string: \"5\", \"1,3,5\", \"1-10\", or mixed "
+            "\"1,3-5,12-20\". Omit for the whole document; an unparseable value "
+            "silently falls back to all pages. top_keywords is raw frequency "
+            "with NO stopword filtering, so expect \"that\", \"with\" and "
+            "\"this\" near the top. dates_found only matches numeric forms like "
+            "3/14/2026 or 2026-03-14, never \"March 14, 2026\", and is "
+            "deduplicated through a set so the order is arbitrary. dates_found "
+            "and significant_numbers are each capped at 10 entries."
+        ),
+        annotations={
+            "readOnlyHint": True,        # opens the PDF, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def summarize_content(
         self,
         pdf_path: str,
         pages: Optional[str] = None,
-        summary_length: str = "medium"
+        summary_length: Literal["short", "medium", "long"] = "medium"
     ) -> Dict[str, Any]:
         """
         Generate summary and extract key insights from PDF content.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
-            pages: Page numbers to summarize (comma-separated, 1-based), None for all
-            summary_length: Summary length ("short", "medium", "long")
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
+            pages: 1-based page selection, e.g. "5", "1,3,5", "1-10",
+                "1,3-5,12-20". None (the default) means every page. An
+                unparseable value falls back to every page.
+            summary_length: How many sentences to return — "short" gives 3,
+                "medium" 7, "long" 15.
 
         Returns:
-            Dictionary containing content summary and insights
+            Dict with success plus:
+              - summary: length, sentences (score-ordered, drawn only from the
+                first 50 sentences), key_insights (canned observations about
+                word count, topics, dates and section count)
+              - content_metrics: total_words, total_sentences,
+                total_paragraphs, estimated_reading_time_minutes (words // 200),
+                pages_analyzed
+              - key_elements: top_keywords as {word, frequency} objects (top 10,
+                no stopword filtering), identified_topics (repeated capitalised
+                phrases), dates_found (max 10, numeric formats only),
+                significant_numbers (max 10, as strings)
+              - document_characteristics: content_density, structure_complexity,
+                topic_diversity
         """
         start_time = time.time()
 
@@ -330,7 +429,41 @@ class ContentAnalysisMixin(MCPMixin):
 
     @mcp_tool(
         name="analyze_layout",
-        description="Analyze PDF page layout including text blocks, columns, and spacing"
+        description=(
+            "Describe the geometry WITHIN pages: how many text blocks, their "
+            "sizes and bounding boxes, how many columns the text appears to be "
+            "in, how much of the page the text covers, and a coarse layout_type "
+            "per page. Read-only, writes nothing.\n"
+            "\n"
+            "Page-level, not document-level. Use get_document_structure for the "
+            "bookmark outline and page sizes, and detect_structure to find "
+            "chapters and sections. Reach for analyze_layout when you need to "
+            "know whether text is in two columns before extracting it, or where "
+            "on the page a block sits so you can place an annotation.\n"
+            "\n"
+            "DEFAULTS TO THE FIRST 5 PAGES ONLY when `pages` is omitted — it "
+            "does not analyse the whole document. `pages` is a 1-based string: "
+            "\"5\", \"1,3,5\", \"1-10\", or mixed \"1,3-5,12-20\"; an "
+            "unparseable value falls back to the first 5 pages.\n"
+            "\n"
+            "Leave include_coordinates at True unless the response is too "
+            "large: setting it False also DISABLES COLUMN DETECTION, because "
+            "the column heuristic reads the very coordinates it just dropped, "
+            "and every page then reports estimated_columns=1 and layout_type "
+            "\"simple\" or \"complex\". The heuristic itself is crude — it sorts "
+            "text-block left edges and counts gaps wider than 50 points, so "
+            "indented blocks, sidebars and tables all read as extra columns. "
+            "text_coverage_percent sums block bounding-box areas and can exceed "
+            "100 when blocks overlap. image_blocks report the image's own pixel "
+            "dimensions, NOT its placement on the page, and carry no "
+            "coordinates. Each page's text_blocks list is truncated to the "
+            "first 10 entries even though the counts stay complete."
+        ),
+        annotations={
+            "readOnlyHint": True,        # opens the PDF, writes nothing
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def analyze_layout(
         self,
@@ -342,12 +475,27 @@ class ContentAnalysisMixin(MCPMixin):
         Analyze PDF page layout structure including text blocks and spacing.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
-            pages: Page numbers to analyze (comma-separated, 1-based), None for all
-            include_coordinates: Whether to include detailed coordinate information
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
+            pages: 1-based page selection, e.g. "5", "1,3,5", "1-10",
+                "1,3-5,12-20". None (the default) analyses the FIRST 5 PAGES,
+                not all of them. An unparseable value falls back to the first 5.
+            include_coordinates: Include each text block's x1/y1/x2/y2 box.
+                Keep this True: with False the column heuristic has no
+                coordinates to work from and estimated_columns is always 1.
 
         Returns:
-            Dictionary containing layout analysis results
+            Dict with success plus:
+              - layout_summary: pages_analyzed, most_common_layout,
+                average_text_blocks_per_page, average_columns_per_page,
+                layout_consistency (high if at most 2 distinct layout types
+                were seen, medium at 3, else low)
+              - page_layouts: per page — page, page_size, layout_type
+                (multi_column when >2 columns, two_column at 2, complex when
+                >10 text blocks, image_heavy when >3 images, else simple),
+                content_summary counts, text_blocks (first 10) and image_blocks
+              - layout_insights: three prose lines restating the summary
+              - analysis_settings: include_coordinates and pages_processed
+                (the literal `pages` value, or "first_N")
         """
         start_time = time.time()
 

@@ -6,7 +6,7 @@ Uses official fastmcp.contrib.mcp_mixin pattern
 import time
 import tempfile
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Literal, Optional, List
 import logging
 
 # PDF and image processing libraries
@@ -32,7 +32,39 @@ class ImageProcessingMixin(MCPMixin):
 
     @mcp_tool(
         name="extract_images",
-        description="Extract images from PDF with custom output path"
+        description=(
+            "Extract the EMBEDDED raster images from a PDF and write each one as "
+            "a separate file. Returns a summary plus one entry per image (filename, "
+            "absolute path, page, pixel dimensions, byte size). Use pdf_to_markdown "
+            "instead when you want the page text with the images referenced inline, "
+            "and extract_vector_graphics for charts/schematics drawn as vector paths "
+            "rather than stored as bitmaps.\n"
+            "\n"
+            "Files land in output_directory (created if missing); when it is omitted "
+            "a fresh temp directory is made and its path is returned in "
+            "extraction_summary.output_directory. Filenames are "
+            "'{pdf_stem}_page_{N}_img_{M}.{output_format}' and an existing file with "
+            "the same name is overwritten.\n"
+            "\n"
+            "min_width/min_height (both default 100 px) skip any image smaller than "
+            "the limit in EITHER dimension, which drops logos, rules and spacer "
+            "GIFs. Raise them to cut noise; set both to 1 to keep everything. "
+            "Skipped and failed images are only counted in images_skipped, so a "
+            "successful call with images_extracted == 0 means everything was "
+            "filtered out, not that the PDF has no images.\n"
+            "\n"
+            "CAVEAT on include_context: the 'context' string is NOT text adjacent to "
+            "the image. It is a context_chars-wide slice taken from the MIDDLE of the "
+            "page's text, identical for every image on that page. Treat it as a rough "
+            "page hint only; leave include_context=False if you need real captions "
+            "and get them from extract_text or pdf_to_markdown."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes one image file per extracted image
+            "destructiveHint": True,     # overwrites same-named files in output_directory
+            "idempotentHint": True,      # deterministic filenames; re-running rewrites the same set
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def extract_images(
         self,
@@ -40,7 +72,7 @@ class ImageProcessingMixin(MCPMixin):
         output_directory: Optional[str] = None,
         min_width: int = 100,
         min_height: int = 100,
-        output_format: str = "png",
+        output_format: Literal["png", "jpg", "jpeg"] = "png",
         pages: Optional[str] = None,
         include_context: bool = True,
         context_chars: int = 200
@@ -49,17 +81,31 @@ class ImageProcessingMixin(MCPMixin):
         Extract images from PDF with custom output directory and clean summary.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
-            output_directory: Directory to save extracted images (default: temp directory)
-            min_width: Minimum image width to extract
-            min_height: Minimum image height to extract
-            output_format: Output image format ("png", "jpg", "jpeg")
-            pages: Page numbers to extract (comma-separated, 1-based), None for all
-            include_context: Whether to include surrounding text context
-            context_chars: Number of context characters around images
+            pdf_path: Path to the PDF, or an HTTPS URL to fetch.
+            output_directory: Directory to write the images into, created if it
+                does not exist. Defaults to a new temp directory whose path is
+                returned as extraction_summary.output_directory.
+            min_width: Skip images narrower than this many pixels (default 100).
+            min_height: Skip images shorter than this many pixels (default 100).
+                An image is skipped if EITHER dimension is under its limit.
+            output_format: "png" (default), "jpg" or "jpeg". "jpg"/"jpeg" encode
+                as JPEG, anything else as PNG; the value is also used verbatim
+                as the file extension.
+            pages: Pages to scan, 1-based. Accepts single pages, comma lists and
+                ranges: "5", "1,3,5", "1-10", "1,3-5,7". None (default) means
+                every page. A string that fails to parse is treated as None.
+            include_context: Attach a "context" string to each image entry.
+                See the caveat in the tool description: it is a slice from the
+                middle of the page text, not text near the image.
+            context_chars: Width in characters of that page-text slice
+                (default 200).
 
         Returns:
-            Dictionary containing image extraction summary and paths
+            Dict with success, extraction_summary (images_extracted,
+            images_skipped, pages_processed, total size, output_directory), an
+            "images" list of per-file metadata, the filter settings used, and
+            file_info. Images below the size filter or that failed to decode
+            are counted in images_skipped, not raised.
         """
         start_time = time.time()
 
@@ -222,7 +268,13 @@ class ImageProcessingMixin(MCPMixin):
             "Use output_filename to override the default .md filename. "
             "Set vector_fallback_raster=True to render pages with sub-threshold "
             "drawings as raster images instead of skipping them entirely."
-        )
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes the .md plus images/ and vectors/ files
+            "destructiveHint": True,     # overwrites same-named files under output_directory
+            "idempotentHint": True,      # deterministic filenames; re-running rewrites the same set
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def pdf_to_markdown(
         self,
@@ -234,7 +286,7 @@ class ImageProcessingMixin(MCPMixin):
         output_filename: Optional[str] = None,
         min_width: int = 100,
         min_height: int = 100,
-        image_format: str = "png",
+        image_format: Literal["png", "jpg", "jpeg"] = "png",
         inline: bool = False,
         include_vectors: bool = True,
         vector_min_drawings: int = 5,
@@ -251,18 +303,29 @@ class ImageProcessingMixin(MCPMixin):
         response.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
-            pages: Page numbers to convert (comma-separated, 1-based), None for all
+            pdf_path: Path to the PDF, or an HTTPS URL to fetch.
+            pages: Pages to convert, 1-based. Accepts single pages, comma lists
+                and ranges: "5", "1,3,5", "1-10", "1,3-5,7". None (default)
+                means every page. An unparseable string is treated as None.
+                A "## Page N" header is inserted only when more than one page
+                is converted.
             include_images: Whether to include raster images in markdown
-            include_metadata: Whether to include document metadata
+            include_metadata: Prepend a "# Document Metadata" block built from
+                the PDF's own metadata dict. Skipped when every value is empty.
             output_directory: Directory for output .md file and images/ subdirectory.
                 Defaults to a temp directory if not specified.
             output_filename: Custom filename for the output .md file (e.g., "chapter_1.md").
-                Defaults to the PDF filename with .md extension.
-            min_width: Minimum image width to extract (filters small decorative images)
-            min_height: Minimum image height to extract (filters small decorative images)
-            image_format: Image format - "png" or "jpg"
-            inline: Return full markdown in response instead of writing to file
+                A missing ".md" suffix is appended. Defaults to the PDF filename
+                with .md extension.
+            min_width: Minimum image width in pixels (default 100). An image is
+                skipped when EITHER dimension is below its limit.
+            min_height: Minimum image height in pixels (default 100).
+            image_format: "png" (default), "jpg" or "jpeg". "jpg"/"jpeg" encode
+                as JPEG, anything else as PNG; the value is also the file
+                extension.
+            inline: Return the full markdown in the response instead of writing
+                the .md file. NOTE: images and vectors are still extracted to
+                disk under output_directory, so this is not a dry run.
             include_vectors: Extract significant vector graphics as SVG (default: True).
                 Detects charts, schematics, and technical drawings automatically.
             vector_min_drawings: Minimum drawing count per page to consider (default: 5)
@@ -640,14 +703,49 @@ class ImageProcessingMixin(MCPMixin):
 
     @mcp_tool(
         name="extract_vector_graphics",
-        description="Extract vector graphics from PDF to SVG format. Ideal for schematics, charts, and technical drawings."
+        description=(
+            "Export PDF pages as SVG, capturing content drawn as vector paths: "
+            "circuit schematics, IC block diagrams, response curves, dimensioned "
+            "package outlines, PCB layouts. Use extract_images instead for "
+            "content stored as bitmaps, and pdf_to_markdown when you want text "
+            "plus auto-detected diagrams in one pass.\n"
+            "\n"
+            "UNCONDITIONAL, unlike pdf_to_markdown's vector step: every requested "
+            "page is exported with no complexity threshold, so a text-only page "
+            "still produces an SVG. Check the per-page drawing_count in the result "
+            "to tell a real diagram from a page whose only 'vectors' are table "
+            "rules.\n"
+            "\n"
+            "Modes:\n"
+            "  full_page (default) — the whole page rendered by PyMuPDF, layout, "
+            "colours and text preserved. This is the one you want for diagrams.\n"
+            "  drawings_only — a hand-built SVG of just the path geometry. Only "
+            "lines, rectangles, quads and cubic beziers are converted, and TEXT IS "
+            "ALWAYS DROPPED regardless of include_text, so labels, pin names and "
+            "axis values disappear. A page with zero drawings yields no file and is "
+            "reported as skipped.\n"
+            "  both — write both files per page.\n"
+            "\n"
+            "Files go to output_directory (created if missing; a temp directory when "
+            "omitted) as '{pdf_stem}_page_{N}.svg' and "
+            "'{pdf_stem}_page_{N}_drawings.svg'; same-named files are overwritten. "
+            "An invalid mode returns success=false without writing anything, while a "
+            "page that fails mid-run is reported as a per-page error with the overall "
+            "call still success=true."
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes one or two SVG files per page
+            "destructiveHint": True,     # overwrites same-named files in output_directory
+            "idempotentHint": True,      # deterministic filenames; re-running rewrites the same set
+            "openWorldHint": True,       # pdf_path may be an HTTPS URL
+        },
     )
     async def extract_vector_graphics(
         self,
         pdf_path: str,
         output_directory: Optional[str] = None,
         pages: Optional[str] = None,
-        mode: str = "full_page",
+        mode: Literal["full_page", "drawings_only", "both"] = "full_page",
         include_text: bool = True,
         simplify_paths: bool = False,
     ) -> Dict[str, Any]:
@@ -662,18 +760,32 @@ class ImageProcessingMixin(MCPMixin):
         - PCB layout diagrams
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
-            output_directory: Directory to save SVG files (default: temp directory)
-            pages: Page numbers to extract (comma-separated, 1-based), None for all
-            mode: Extraction mode:
-                - "full_page": Complete page as SVG (default, best for general use)
-                - "drawings_only": Extract individual vector paths as separate SVG
-                - "both": Export both formats for flexibility
-            include_text: Whether to include text in SVG output (default: True)
-            simplify_paths: Reduce path complexity for smaller files (default: False)
+            pdf_path: Path to the PDF, or an HTTPS URL to fetch.
+            output_directory: Directory to write the SVG files into, created if
+                missing. Defaults to a new temp directory whose path comes back
+                as extraction_summary.output_directory.
+            pages: Pages to export, 1-based. Accepts single pages, comma lists
+                and ranges: "5", "1,3,5", "1-10", "1,3-5,7". None (default)
+                means every page. An unparseable string is treated as None.
+            mode: "full_page" (default) renders the complete page; "drawings_only"
+                rebuilds only the path geometry and always omits text;
+                "both" writes one file of each. Any other value returns an error.
+            include_text: Only affects full_page mode. True (default) keeps text
+                as selectable SVG <text> elements; False converts glyphs to
+                outlined paths — the text still LOOKS present but is no longer
+                selectable or searchable. drawings_only ignores this flag and
+                never carries text.
+            simplify_paths: Only affects full_page mode. Rounds coordinates with
+                three or more decimals down to one decimal place to shrink the
+                file. It does not remove or merge paths, and does not touch the
+                drawings_only output.
 
         Returns:
-            Dictionary containing extraction summary and SVG file paths
+            Dict with success, extraction_summary (pages_processed,
+            pages_successful, mode, total size, output_directory), an svg_files
+            list carrying per-page page/has_text/drawing_count plus a
+            "full_page" and/or "drawings_only" entry (or "error" for a page that
+            failed), the settings used, and viewing hints.
         """
         start_time = time.time()
 
@@ -1001,14 +1113,22 @@ class ImageProcessingMixin(MCPMixin):
             "Pass pdf_engine to override, or extra_args for custom pandoc options "
             "(e.g. ['-V', 'geometry:margin=1in']). Requires pandoc binary on host "
             "and at least one PDF engine. Install with: pip install mcp-pdf[markdown]"
-        )
+        ),
+        annotations={
+            "readOnlyHint": False,       # writes the PDF at output_path
+            "destructiveHint": True,     # overwrites output_path if it exists
+            "idempotentHint": True,      # same markdown + engine produce the same document
+            "openWorldHint": True,       # shells out to pandoc and an external PDF engine
+        },
     )
     async def markdown_to_pdf(
         self,
         output_path: str,
         markdown_path: Optional[str] = None,
         markdown_text: Optional[str] = None,
-        pdf_engine: Optional[str] = None,
+        pdf_engine: Optional[
+            Literal["xelatex", "pdflatex", "tectonic", "weasyprint", "wkhtmltopdf"]
+        ] = None,
         toc: bool = False,
         title: Optional[str] = None,
         author: Optional[str] = None,
@@ -1034,7 +1154,8 @@ class ImageProcessingMixin(MCPMixin):
             markdown_path: Path to a .md file. Mutually exclusive with markdown_text.
             markdown_text: Inline markdown content. Mutually exclusive with markdown_path.
             pdf_engine: Force a specific engine ("xelatex", "pdflatex", "tectonic",
-                "weasyprint", "wkhtmltopdf"). Default: auto-detect.
+                "weasyprint", "wkhtmltopdf"). None (default) auto-detects the
+                first of those five found on PATH, in that preference order.
             toc: Generate a table of contents from headings.
             title: Document title (overrides any YAML frontmatter title).
             author: Document author (overrides any YAML frontmatter author).
@@ -1044,8 +1165,12 @@ class ImageProcessingMixin(MCPMixin):
             extra_args: Additional raw pandoc CLI arguments (advanced).
 
         Returns:
-            Dict with output_path, file_size, engine_used, conversion_time, and
-            (when applicable) detected_engines listing what's available on the host.
+            Dict with output_path, file_size, file_size_kb, engine_used,
+            detected_engines, toc and conversion_time. Unlike the other tools in
+            this server there is NO "success" key: a failure returns a dict whose
+            only substantive key is "error" (plus conversion_time, and
+            detected_engines when a requested engine was missing). Branch on the
+            presence of "error" / "output_path", not on "success".
         """
         import shutil
 

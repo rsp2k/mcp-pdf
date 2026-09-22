@@ -29,17 +29,71 @@ class SecurityAnalysisMixin(MCPMixin):
 
     @mcp_tool(
         name="analyze_pdf_security",
-        description="Analyze PDF security features and potential issues"
+        description=(
+            "Report how locked-down a PDF is: encryption, the eight permission "
+            "flags, whether metadata could leak information, and a 0-100 "
+            "security_score. Read-only, writes nothing, and it does NOT change "
+            "any protection — there is no tool here that adds or removes a "
+            "password.\n"
+            "\n"
+            "READ THIS BEFORE REPORTING THE SCORE. The score measures "
+            "restriction, not safety. A perfectly ordinary, benign, "
+            "unencrypted PDF with a title and author loses 20 points for "
+            "having no password and 10 more for each warning, so it typically "
+            "lands around 40 and gets labelled \"Low\" or even \"Critical\". "
+            "That is the expected reading for a normal document and is not "
+            "evidence of a problem. Scoring: start 100, minus 10 per warning, "
+            "minus 20 if not encrypted, minus 15 if JavaScript was seen, minus "
+            "10 if embedded files were seen, floored at 0. Levels: High >=80, "
+            "Medium >=60, Low >=40, else Critical.\n"
+            "\n"
+            "Pick your analyser: analyze_pdf_security for encryption and "
+            "permissions, analyze_pdf_health for whether the file is readable "
+            "and usable, extract_metadata for the plain header fields. Use "
+            "detect_watermarks for visible DRAFT/CONFIDENTIAL markings.\n"
+            "\n"
+            "Detector limits in the current build, so absence is not evidence: "
+            "JavaScript is looked for only in annotation info dictionaries on "
+            "the first 10 pages, so document-level scripts (OpenAction, the "
+            "/Names JavaScript tree) are never seen and has_javascript is "
+            "almost always false. Embedded-file enumeration uses an API name "
+            "this PyMuPDF does not have, so embedded_files_count is ALWAYS 0. "
+            "is_linearized is always false. pdf_version is always the string "
+            "\"Unknown\". is_encrypted means \"needs a password to open\", so "
+            "an owner-password-only file reads as false while its permission "
+            "flags still apply."
+        ),
+        annotations={
+            "readOnlyHint": True,        # inspects only; changes no protection
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def analyze_pdf_security(self, pdf_path: str) -> Dict[str, Any]:
         """
         Analyze PDF security features including encryption, permissions, and vulnerabilities.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
 
         Returns:
-            Dictionary containing security analysis results
+            Dict with success plus:
+              - security_score (0-100) and security_level
+                (High/Medium/Low/Critical) — see the description for why a
+                normal file scores low
+              - encryption_info: is_encrypted (needs a password to open),
+                is_linearized (always false), pdf_version (always "Unknown")
+              - permissions: print_allowed, copy_allowed, modify_allowed,
+                annotate_allowed, form_fill_allowed, extract_allowed (this one
+                is the PDF accessibility-extraction bit, not plain copying),
+                assemble_allowed, print_high_quality_allowed
+              - security_features: has_javascript, javascript_instances,
+                embedded_files_count (always 0, see description),
+                embedded_files
+              - metadata_analysis: has_metadata plus metadata_warnings, one
+                string per populated creator/producer/title/author/subject
+                field with its value truncated to 50 characters
+              - security_assessment: warnings, recommendations, total_issues
         """
         start_time = time.time()
 
@@ -204,17 +258,59 @@ class SecurityAnalysisMixin(MCPMixin):
 
     @mcp_tool(
         name="detect_watermarks",
-        description="Detect and analyze watermarks in PDF"
+        description=(
+            "Look for probable watermark markings on every page and report "
+            "where they are. Read-only: it DETECTS, it cannot add or remove a "
+            "watermark, and nothing is written. Scans ALL pages with no cap, "
+            "so it is the slowest tool in this group on a long document.\n"
+            "\n"
+            "It is a keyword-and-size heuristic, not real watermark analysis — "
+            "it never inspects opacity, rotation or draw order. Treat every "
+            "hit as a candidate to verify, and expect false positives:\n"
+            "  text  — a text span that equals DRAFT, CONFIDENTIAL, COPY, "
+            "SAMPLE or WATERMARK, or merely CONTAINS \"watermark\", "
+            "\"confidential\" or \"draft\" case-insensitively. A sentence in "
+            "the body prose saying \"this draft\" is counted as a watermark.\n"
+            "  image — any embedded image under 200 pixels in either "
+            "dimension, which also catches every logo, icon and signature "
+            "graphic.\n"
+            "  shape — any vector drawing with more than 5 path items.\n"
+            "\n"
+            "Consequently has_watermarks=false is a much stronger signal than "
+            "has_watermarks=true. `recommendations` is a fixed boilerplate "
+            "list, not a finding. For encryption and permissions use "
+            "analyze_pdf_security; to read real annotation objects use "
+            "extract_all_annotations."
+        ),
+        annotations={
+            "readOnlyHint": True,        # detects only; cannot strip a watermark
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def detect_watermarks(self, pdf_path: str) -> Dict[str, Any]:
         """
         Detect and analyze watermarks in PDF document.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
 
         Returns:
-            Dictionary containing watermark detection results
+            Dict with success plus:
+              - watermark_summary: has_watermarks, total_watermarks,
+                watermark_density (hits divided by total pages, so it can
+                exceed 1.0), pattern ("comprehensive" >0.8, "selective" >0.3,
+                "minimal" >0, else "none"), types_found counts for
+                text/image/shape
+              - page_analysis: one entry per page that had at least one hit
+                (pages with none are omitted), each with page,
+                watermarks_found and the individual watermark objects. Text
+                hits carry content, font_size and x/y coordinates; image hits
+                carry a "WxH" pixel size and image_index; shape hits carry
+                only an item-count complexity.
+              - watermark_insights: pages_with_watermarks,
+                pages_without_watermarks, most_common_type
+              - recommendations: fixed boilerplate strings, not findings
         """
         start_time = time.time()
 

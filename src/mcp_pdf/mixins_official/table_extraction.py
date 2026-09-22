@@ -6,7 +6,7 @@ Uses official fastmcp.contrib.mcp_mixin pattern
 import asyncio
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List, Literal, Optional
 import logging
 
 # Required
@@ -35,14 +35,58 @@ class TableExtractionMixin(MCPMixin):
 
     @mcp_tool(
         name="extract_tables",
-        description="Extract tables from PDF with automatic method selection and intelligent fallbacks"
+        description=(
+            "Pull tabular data out of a PDF as rows, trying several extractors "
+            "until one finds something. Read-only: results come back in the "
+            "response and no file is written, so cap the volume with "
+            "max_rows_per_table or summary_only on a big document.\n"
+            "\n"
+            "READ THIS ABOUT FAILURE. When no extractor finds a table you get "
+            "success=false with error \"No tables found or all extraction "
+            "methods failed\", and that single message covers both cases. In "
+            "practice it almost always means THE PDF HAS NO DETECTABLE TABLES, "
+            "not that anything broke — a document of flowing prose returns it "
+            "every time. Do not report it to the user as an error or retry it; "
+            "read `methods_tried` to see which extractors actually ran, and "
+            "note that an explicitly requested method that is not installed "
+            "lands in this same branch (methods_tried will name just that one). "
+            "The extractors are genuinely broken only when the process cannot "
+            "reach them at all, and that surfaces as a different message.\n"
+            "\n"
+            "method=\"auto\" tries camelot (if installed), then pdfplumber "
+            "(always available), then tabula (if installed), and stops at the "
+            "first that returns at least one table; `method_used` names the "
+            "winner. They see different things, so if auto finds nothing a "
+            "specific method rarely does better — but the tradeoffs are: "
+            "camelot only runs its 'lattice' mode, so it needs ruled cell "
+            "borders and it needs Ghostscript, and in return it reports an "
+            "`accuracy` score; pdfplumber handles whitespace-aligned tables "
+            "with no borders and treats the first row as the header; tabula "
+            "needs a Java runtime and cannot tell you which page a table came "
+            "from, so its `page` is always null.\n"
+            "\n"
+            "`pages` is a 1-based string: \"5\", \"1,3,5\", \"1-10\", or mixed "
+            "\"1,3-5,12-20\". Omit for the whole document. `table_format` "
+            "shapes each table's `data`: \"json\" gives a list of row objects "
+            "keyed by column name (the default and the easiest to reason "
+            "about), \"csv\" one CSV string, \"html\" one HTML table string. It "
+            "is IGNORED when summary_only=true, which drops `data` entirely and "
+            "leaves only the shape of each table. max_rows_per_table truncates "
+            "`data` while `total_rows` keeps the true count, and adds "
+            "rows_returned / rows_truncated so you can tell."
+        ),
+        annotations={
+            "readOnlyHint": True,        # returns rows in the response, writes no file
+            "idempotentHint": True,
+            "openWorldHint": True,       # pdf_path may be an http(s) URL
+        },
     )
     async def extract_tables(
         self,
         pdf_path: str,
         pages: Optional[str] = None,
-        method: str = "auto",
-        table_format: str = "json",
+        method: Literal["auto", "camelot", "pdfplumber", "tabula"] = "auto",
+        table_format: Literal["json", "csv", "html"] = "json",
         max_rows_per_table: Optional[int] = None,
         summary_only: bool = False
     ) -> Dict[str, Any]:
@@ -50,15 +94,33 @@ class TableExtractionMixin(MCPMixin):
         Extract tables from PDF using intelligent method selection.
 
         Args:
-            pdf_path: Path to PDF file or HTTPS URL
-            pages: Page numbers to extract (comma-separated, 1-based), None for all
-            method: Extraction method ("auto", "camelot", "pdfplumber", "tabula")
-            table_format: Output format ("json", "csv", "html")
-            max_rows_per_table: Maximum rows to return per table (prevents token overflow)
-            summary_only: Return only table metadata without data (useful for large tables)
+            pdf_path: Path to the PDF, or an http(s) URL to fetch.
+            pages: 1-based page selection, e.g. "5", "1,3,5", "1-10",
+                "1,3-5,12-20". None (the default) means every page.
+            method: "auto" walks camelot -> pdfplumber -> tabula and keeps the
+                first result. Name one explicitly only when you know the table
+                style: camelot for ruled/bordered tables (needs Ghostscript),
+                pdfplumber for borderless whitespace-aligned ones, tabula for
+                awkward layouts (needs Java).
+            table_format: Shape of each table's "data" — "json" for row
+                objects, "csv" for one CSV string, "html" for one HTML table.
+                Ignored when summary_only is True.
+            max_rows_per_table: Truncate the returned rows per table.
+                "total_rows" still reports the real count.
+            summary_only: Omit "data" (and rows_returned/rows_truncated) and
+                return only each table's page, row count and column count.
 
         Returns:
-            Dictionary containing extracted tables and metadata
+            On success: success=true, tables_found, method_used, and `tables` —
+            one entry per table with table_index (1-based), page (1-based;
+            null from tabula), total_rows, columns, accuracy (camelot only),
+            and unless summary_only the data plus rows_returned and, when
+            truncated, rows_truncated.
+
+            When nothing is found: success=false with error "No tables found or
+            all extraction methods failed" and methods_tried. As the
+            description says, this usually means there are no tables to find
+            rather than that extraction broke.
         """
         start_time = time.time()
 
