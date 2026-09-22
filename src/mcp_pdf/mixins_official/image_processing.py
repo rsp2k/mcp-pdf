@@ -1165,12 +1165,15 @@ class ImageProcessingMixin(MCPMixin):
             extra_args: Additional raw pandoc CLI arguments (advanced).
 
         Returns:
-            Dict with output_path, file_size, file_size_kb, engine_used,
-            detected_engines, toc and conversion_time. Unlike the other tools in
-            this server there is NO "success" key: a failure returns a dict whose
-            only substantive key is "error" (plus conversion_time, and
-            detected_engines when a requested engine was missing). Branch on the
-            presence of "error" / "output_path", not on "success".
+            Dict with success, plus on success output_path, file_size,
+            file_size_kb, engine_used, detected_engines, toc and
+            conversion_time. On failure: success=False, error, conversion_time,
+            and detected_engines when a requested engine was missing.
+
+            success is on every return path, matching the rest of the server.
+            It was absent entirely until 2026-09-22, so callers written against
+            the older shape branched on the presence of "error"/"output_path";
+            that still works, since those keys are unchanged.
         """
         import shutil
 
@@ -1184,6 +1187,7 @@ class ImageProcessingMixin(MCPMixin):
                 import pypandoc
             except ImportError:
                 return {
+                    "success": False,
                     "error": (
                         "pypandoc is not installed. Install with: "
                         "pip install mcp-pdf[markdown]   (also requires the pandoc "
@@ -1197,6 +1201,7 @@ class ImageProcessingMixin(MCPMixin):
                 pypandoc.get_pandoc_version()
             except OSError:
                 return {
+                    "success": False,
                     "error": (
                         "pandoc binary not found on PATH. Install pandoc: "
                         "https://pandoc.org/installing.html"
@@ -1207,6 +1212,7 @@ class ImageProcessingMixin(MCPMixin):
             # Validate input — exactly one of markdown_path or markdown_text
             if bool(markdown_path) == bool(markdown_text):
                 return {
+                    "success": False,
                     "error": "Provide exactly one of markdown_path or markdown_text",
                     "conversion_time": round(time.time() - start_time, 2),
                 }
@@ -1222,6 +1228,7 @@ class ImageProcessingMixin(MCPMixin):
             if pdf_engine:
                 if not shutil.which(pdf_engine):
                     return {
+                        "success": False,
                         "error": (
                             f"Requested PDF engine '{pdf_engine}' not found on PATH. "
                             f"Available engines: {available_engines or 'none'}"
@@ -1233,6 +1240,7 @@ class ImageProcessingMixin(MCPMixin):
             else:
                 if not available_engines:
                     return {
+                        "success": False,
                         "error": (
                             "No PDF engine found on PATH. Install one of: "
                             + ", ".join(ENGINE_PREFERENCE)
@@ -1271,6 +1279,7 @@ class ImageProcessingMixin(MCPMixin):
                 source_path = Path(markdown_path).resolve()
                 if not source_path.is_file():
                     return {
+                        "success": False,
                         "error": f"Markdown file not found: {markdown_path}",
                         "conversion_time": round(time.time() - start_time, 2),
                     }
@@ -1292,6 +1301,7 @@ class ImageProcessingMixin(MCPMixin):
             file_size = output.stat().st_size
 
             return {
+                "success": True,
                 "output_path": str(output),
                 "file_size": file_size,
                 "file_size_kb": round(file_size / 1024, 2),
@@ -1308,6 +1318,7 @@ class ImageProcessingMixin(MCPMixin):
             error_msg = sanitize_error_message(str(e))
             logger.error(f"Markdown to PDF conversion failed: {error_msg}")
             return {
+                "success": False,
                 "error": f"Pandoc conversion failed: {error_msg}",
                 "conversion_time": round(time.time() - start_time, 2),
             }
@@ -1315,6 +1326,7 @@ class ImageProcessingMixin(MCPMixin):
             error_msg = sanitize_error_message(str(e))
             logger.error(f"Markdown to PDF failed: {error_msg}")
             return {
+                "success": False,
                 "error": error_msg,
                 "conversion_time": round(time.time() - start_time, 2),
             }

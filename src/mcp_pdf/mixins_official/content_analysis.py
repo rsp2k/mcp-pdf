@@ -47,9 +47,8 @@ class ContentAnalysisMixin(MCPMixin):
             "is a raw count of fixed keyword substrings per category, and "
             "confidence is that category's SHARE of all keyword hits, not a "
             "probability of being right. When the document matches no keyword "
-            "at all the scores are all zero and primary_type falls back to the "
-            "first category in the table, \"academic\", with confidence 0.0 — "
-            "so confidence 0.0 means \"unclassified\", not \"an academic paper\". "
+            "at all, primary_type is \"general\" with confidence 0.0, which "
+            "means \"unclassified\" rather than any positive finding. "
             "Anything under roughly 0.4 is a weak signal; compare against "
             "secondary_types, which is a list of [category, raw_score] pairs "
             "for the next three ranked categories.\n"
@@ -80,8 +79,9 @@ class ContentAnalysisMixin(MCPMixin):
         Returns:
             Dict with success plus:
               - classification: primary_type (one of academic, business, legal,
-                technical, financial, medical, educational), confidence
-                (0.0-1.0 share of keyword hits; 0.0 means nothing matched),
+                technical, financial, medical, educational, or "general" when
+                nothing matched), confidence (0.0-1.0 share of keyword hits;
+                0.0 always means unclassified),
                 secondary_types as [category, raw_score] pairs for ranks 2-4
               - content_analysis: total_pages, estimated_word_count
                 (extrapolated), avg_words_per_page, vocabulary_diversity
@@ -141,13 +141,23 @@ class ContentAnalysisMixin(MCPMixin):
                 score = sum(text_lower.count(keyword) for keyword in keywords)
                 content_scores[category] = score
 
-            # Determine primary content type
-            if content_scores:
+            # Determine primary content type.
+            #
+            # Guard on any(...) rather than on the dict being non-empty.
+            # content_scores always has one entry per category, so `if
+            # content_scores:` was unconditionally true and the "general"
+            # branch below was dead code. A document matching no keyword got
+            # max() over an all-zero dict, which returns the FIRST key by
+            # insertion order, so every unclassifiable document was reported
+            # as "academic" purely because academic is declared first.
+            # Confidence was 0.0, but a caller reading primary_type without
+            # checking confidence saw a confident-looking wrong answer.
+            if any(content_scores.values()):
                 primary_type = max(content_scores, key=content_scores.get)
                 confidence = content_scores[primary_type] / max(sum(content_scores.values()), 1)
             else:
                 primary_type = "general"
-                confidence = 0.5
+                confidence = 0.0
 
             # Analyze text characteristics
             avg_words_per_page = total_words / sample_size if sample_size > 0 else 0

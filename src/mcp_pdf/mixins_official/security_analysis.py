@@ -13,6 +13,7 @@ import pymupdf
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
 
+from .utils import embedded_file_count, is_linearized, pdf_version, pdf_version_float
 from ..security import validate_pdf_path, sanitize_error_message
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ class SecurityAnalysisMixin(MCPMixin):
             "/Names JavaScript tree) are never seen and has_javascript is "
             "almost always false. Embedded-file enumeration uses an API name "
             "this PyMuPDF does not have, so embedded_files_count is ALWAYS 0. "
-            "is_linearized is always false. pdf_version is always the string "
+            "is_linearized reports fast-web-view. pdf_version is the spec "
             "\"Unknown\". is_encrypted means \"needs a password to open\", so "
             "an owner-password-only file reads as false while its permission "
             "flags still apply."
@@ -82,13 +83,13 @@ class SecurityAnalysisMixin(MCPMixin):
                 (High/Medium/Low/Critical) — see the description for why a
                 normal file scores low
               - encryption_info: is_encrypted (needs a password to open),
-                is_linearized (always false), pdf_version (always "Unknown")
+                is_linearized (fast web view), pdf_version (e.g. "1.3")
               - permissions: print_allowed, copy_allowed, modify_allowed,
                 annotate_allowed, form_fill_allowed, extract_allowed (this one
                 is the PDF accessibility-extraction bit, not plain copying),
                 assemble_allowed, print_high_quality_allowed
               - security_features: has_javascript, javascript_instances,
-                embedded_files_count (always 0, see description),
+                embedded_files_count (real count of attachments),
                 embedded_files
               - metadata_analysis: has_metadata plus metadata_warnings, one
                 string per populated creator/producer/title/author/subject
@@ -103,8 +104,8 @@ class SecurityAnalysisMixin(MCPMixin):
 
             # Basic security information
             is_encrypted = doc.needs_pass
-            is_linearized = getattr(doc, 'is_linearized', False)
-            pdf_version = getattr(doc, 'pdf_version', 'Unknown')
+            doc_is_linearized = is_linearized(doc)
+            doc_pdf_version = pdf_version(doc)
 
             # Permission analysis
             permissions = doc.permissions
@@ -136,8 +137,12 @@ class SecurityAnalysisMixin(MCPMixin):
                 security_recommendations.append("Consider restricting modification permissions")
 
             # Check PDF version for security considerations
-            if isinstance(pdf_version, (int, float)) and pdf_version < 1.4:
-                security_warnings.append(f"Old PDF version ({pdf_version}) may have security vulnerabilities")
+            version_f = pdf_version_float(doc)
+            if version_f is not None and version_f < 1.4:
+                security_warnings.append(
+                    f"Old PDF version ({doc_pdf_version}): predates the stronger "
+                    f"encryption and signature algorithms added in 1.4+"
+                )
                 security_recommendations.append("Consider updating to PDF version 1.7 or newer")
 
             # Analyze metadata for potential information disclosure
@@ -177,7 +182,7 @@ class SecurityAnalysisMixin(MCPMixin):
             # Check for embedded files
             embedded_files = []
             try:
-                for i in range(doc.embedded_file_count()):
+                for i in range(embedded_file_count(doc)):
                     file_info = doc.embedded_file_info(i)
                     embedded_files.append({
                         "name": file_info.get("name", f"embedded_file_{i}"),
@@ -221,8 +226,8 @@ class SecurityAnalysisMixin(MCPMixin):
                 "security_level": security_level,
                 "encryption_info": {
                     "is_encrypted": is_encrypted,
-                    "is_linearized": is_linearized,
-                    "pdf_version": pdf_version
+                    "is_linearized": doc_is_linearized,
+                    "pdf_version": doc_pdf_version
                 },
                 "permissions": permission_details,
                 "security_features": {

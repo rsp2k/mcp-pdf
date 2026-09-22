@@ -13,6 +13,7 @@ import pymupdf
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
 
+from .utils import is_linearized, pdf_version, pdf_version_float
 from ..security import validate_pdf_path, sanitize_error_message
 from ..xfa import is_xfa_pdf as _detect_xfa
 
@@ -50,9 +51,9 @@ class DocumentAnalysisMixin(MCPMixin):
             "estimated_total_links) is EXTRAPOLATED from the first 5 pages, not "
             "counted — use extract_images or extract_links for real counts. "
             "`is_encrypted` is really \"needs a password to open\", so an "
-            "owner-password-only file reads as False. `is_linearized` is always "
-            "False and `pdf_version` is always the string \"Unknown\" in the "
-            "current build; ignore both."
+            "owner-password-only file reads as False. `pdf_version` is the "
+            "PDF spec version as a string (\"1.3\", \"1.7\"), and "
+            "`is_linearized` reports fast-web-view."
         ),
         annotations={
             "readOnlyHint": True,        # opens the PDF, writes nothing
@@ -74,8 +75,8 @@ class DocumentAnalysisMixin(MCPMixin):
                 back as "" rather than being omitted.
               - document_info: page_count, file_size_bytes, file_size_mb,
                 is_encrypted (needs a password to open), is_linearized
-                (always False, see description), pdf_version (always
-                "Unknown", see description).
+                (fast web view), pdf_version (spec version as a string,
+                e.g. "1.3"; None if the producer omitted it).
               - content_analysis: estimated_text_characters,
                 estimated_total_images, estimated_total_links — all
                 extrapolated from sample_pages_analyzed (first 5 pages).
@@ -130,7 +131,12 @@ class DocumentAnalysisMixin(MCPMixin):
 
             # Check for encryption
             is_encrypted = doc.needs_pass
-            is_linearized = doc.is_pdf and hasattr(doc, 'is_fast_web_view') and doc.is_fast_web_view
+            doc_is_linearized = is_linearized(doc)
+            # Read every document property BEFORE close. PyMuPDF happens to
+            # cache metadata on the Python object so this would survive, but
+            # relying on that is how extract_form_data ended up evaluating
+            # len(doc) after close and reporting "document closed" forever.
+            doc_pdf_version = pdf_version(doc)
 
             doc.close()
 
@@ -156,8 +162,8 @@ class DocumentAnalysisMixin(MCPMixin):
                     "file_size_bytes": file_size,
                     "file_size_mb": file_size_mb,
                     "is_encrypted": is_encrypted,
-                    "is_linearized": is_linearized,
-                    "pdf_version": getattr(doc, 'pdf_version', 'Unknown')
+                    "is_linearized": doc_is_linearized,
+                    "pdf_version": doc_pdf_version
                 },
                 "content_analysis": {
                     "estimated_text_characters": estimated_total_text,
@@ -388,7 +394,7 @@ class DocumentAnalysisMixin(MCPMixin):
               - recommendations: suggested next actions, e.g. "Consider OCR
                 for text extraction"
               - document_stats: total_pages, file_size_mb, pdf_version
-                (always "Unknown"), is_encrypted, is_xfa, xfa_type
+                (e.g. "1.3"), is_encrypted, is_xfa, xfa_type
                 ("dynamic"/"static"/None), xfa_detection_failed,
                 sample_pages_analyzed, estimated_text_density
         """
@@ -473,11 +479,11 @@ class DocumentAnalysisMixin(MCPMixin):
                 recommendations.append("Consider OCR for text extraction")
 
             # Check PDF version
-            pdf_version = getattr(doc, 'pdf_version', 'Unknown')
-            if pdf_version and isinstance(pdf_version, (int, float)):
-                if pdf_version < 1.4:
-                    warnings.append(f"Old PDF version: {pdf_version}")
-                    recommendations.append("Consider updating to newer PDF version")
+            doc_pdf_version = pdf_version(doc)
+            version_f = pdf_version_float(doc)
+            if version_f is not None and version_f < 1.4:
+                warnings.append(f"Old PDF version: {doc_pdf_version}")
+                recommendations.append("Consider updating to newer PDF version")
 
             doc.close()
 
@@ -542,7 +548,7 @@ class DocumentAnalysisMixin(MCPMixin):
                 "document_stats": {
                     "total_pages": total_pages,
                     "file_size_mb": round(file_size_mb, 2),
-                    "pdf_version": pdf_version,
+                    "pdf_version": doc_pdf_version,
                     "is_encrypted": is_encrypted,
                     "is_xfa": xfa_info.get("is_xfa"),
                     "xfa_type": xfa_info.get("xfa_type"),
