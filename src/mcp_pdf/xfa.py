@@ -33,8 +33,7 @@ prototype contributed by:
 
 Originally proven on the Idaho REALTORS (IAR) standardized form library
 (RE-05..RE-54), 456 fields extracted from RE-21, 17 identical canonical shared
-fields verified across RE-21 and RE-16. Coordinated via the agent-thread
-``docs/agent-threads/xfa-form-support/``.
+fields verified across RE-21 and RE-16.
 """
 
 from __future__ import annotations

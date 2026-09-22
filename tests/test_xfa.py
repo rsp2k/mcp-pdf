@@ -2,9 +2,8 @@
 
 Two groups, deliberately:
 
-**Happy path** pins behavior against the synthetic XFA fixture contributed via
-the agent-thread at ``docs/agent-threads/xfa-form-support/`` (the
-expected-output table in ``005-iar-attaches-fixture.md``). The fixture is
+**Happy path** pins behavior against the synthetic XFA fixture, using the
+expected-output table its contributor supplied with it. The fixture is
 hand-built, license-clean, ~2 KB; its README documents what each field
 exercises.
 

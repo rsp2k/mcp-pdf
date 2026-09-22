@@ -288,8 +288,7 @@ and found nothing" from "I could not look."
 
 - **2.3.0** XFA (dynamic Adobe LiveCycle) form support: `is_xfa_pdf`,
   `extract_xfa_fields`, detection wired into `extract_form_data`,
-  `convert_to_images` and `analyze_pdf_health`. See
-  `docs/agent-threads/xfa-form-support/` for the design history.
+  `convert_to_images` and `analyze_pdf_health`.
 - **2.2.1** Stripped operator-private paths from the sdist and added
   `[tool.hatch.build.targets.sdist]` exclusions to prevent recurrence.
 - **2.2.0** `markdown_to_pdf` via pandoc, with PDF-engine auto-detection across
