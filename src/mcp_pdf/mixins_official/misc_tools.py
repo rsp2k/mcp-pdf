@@ -600,9 +600,11 @@ class MiscToolsMixin(MCPMixin):
             "index; the bookmark outline above is the navigable one and "
             "stays correct when both options are used together.\n"
             "\n"
-            "add_page_numbers is accepted but NOT IMPLEMENTED: no page "
-            "numbers are stamped on anything. It is echoed back in "
-            "merge_features and otherwise ignored, so do not rely on it."
+            "add_page_numbers stamps \"N / total\" in grey at the bottom "
+            "centre of every page. It runs after the contents page is "
+            "inserted, so that page is numbered too and the totals match the "
+            "finished document. merge_summary.pages_numbered reports how "
+            "many were stamped."
         ),
         annotations={
             "readOnlyHint": False,       # writes a new PDF
@@ -631,7 +633,10 @@ class MiscToolsMixin(MCPMixin):
             preserve_bookmarks: Carry each source's outline across with
                 page numbers rewritten and titles prefixed by source
                 filename. Default true.
-            add_page_numbers: Ignored — not implemented. Nothing is stamped.
+            add_page_numbers: Stamp "N / total" at the bottom centre of each
+                page, 9pt grey, after any contents page is inserted so the
+                numbering covers it and matches the final page count.
+                Default false.
             include_toc: Prepend a plain-text cover page listing each source
                 file and its page count. No links. Default false.
 
@@ -739,6 +744,35 @@ class MiscToolsMixin(MCPMixin):
                     toc_page.insert_text((50, y_pos), toc_line, fontsize=12)
                     y_pos += 20
 
+            # Stamp page numbers. Previously this parameter was accepted,
+            # echoed back in merge_features, and never acted on: no stamping
+            # code existed anywhere in the method.
+            #
+            # Runs AFTER the TOC insert on purpose, so the generated contents
+            # page is itself numbered and the numbers match the final document
+            # rather than being off by one wherever include_toc was used.
+            pages_numbered = 0
+            if add_page_numbers:
+                total = merged_doc.page_count
+                for idx in range(total):
+                    try:
+                        page = merged_doc[idx]
+                        label = f"{idx + 1} / {total}"
+                        rect = page.rect
+                        # Bottom centre, 28pt up from the trim edge. insert_text
+                        # takes the text BASELINE, so this clears the margin on
+                        # a Letter or A4 page without colliding with body text.
+                        page.insert_text(
+                            (rect.width / 2 - len(label) * 2.5, rect.height - 28),
+                            label,
+                            fontsize=9,
+                            fontname="helv",
+                            color=(0.35, 0.35, 0.35),
+                        )
+                        pages_numbered += 1
+                    except Exception as exc:
+                        logger.warning("Could not number page %d: %s", idx + 1, exc)
+
             # Save merged document
             merged_doc.save(str(output_pdf_path))
             output_size = output_pdf_path.stat().st_size
@@ -755,6 +789,7 @@ class MiscToolsMixin(MCPMixin):
                     "total_pages_merged": total_pages,
                     "bookmarks_preserved": preserve_bookmarks and len(merged_toc) > 0,
                     "toc_generated": include_toc,
+                    "pages_numbered": pages_numbered,
                     "output_size_bytes": output_size,
                     "output_size_mb": round(output_size / (1024 * 1024), 2)
                 },

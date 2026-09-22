@@ -32,12 +32,16 @@ class DocumentAssemblyMixin(MCPMixin):
         name="merge_pdfs",
         description=(
             "Concatenate two or more PDFs end-to-end into one NEW PDF at "
-            "output_path. This is the plain merge: it copies pages in the "
-            "order given and DISCARDS every bookmark/outline from the "
-            "sources. Use merge_pdfs_advanced instead when you need the "
-            "source bookmarks carried into the result (it rewrites their "
-            "page numbers and prefixes each title with its source "
-            "filename) or a generated contents page.\n"
+            "output_path, copying pages in the order given and carrying each "
+            "source's bookmarks across with their page targets rebased onto "
+            "the merged document. The response reports bookmarks_preserved "
+            "and bookmarks_dropped (a bookmark whose target page is missing "
+            "or non-positive cannot be rebased and is counted, not silently "
+            "lost).\n"
+            "\n"
+            "Use merge_pdfs_advanced instead when you want each bookmark "
+            "title prefixed with its source filename, a generated contents "
+            "page, or per-file page ranges.\n"
             "\n"
             "`pdf_paths` is a JSON array of path strings, in the order you "
             "want them concatenated:\n"
@@ -74,9 +78,10 @@ class DocumentAssemblyMixin(MCPMixin):
 
         Returns:
             Dict with success, merge_summary (input_files,
-            total_pages_merged, output size), per-input file_info, and the
-            output path. Bookmarks are NOT preserved; use
-            merge_pdfs_advanced for that.
+            total_pages_merged, bookmarks_preserved, bookmarks_dropped,
+            output size), per-input file_info, and the output path.
+            Bookmarks from every source are carried across with their page
+            targets rebased onto the merged document.
         """
         start_time = time.time()
 
@@ -130,14 +135,41 @@ class DocumentAssemblyMixin(MCPMixin):
             # Create merged document
             merged_doc = pymupdf.open()
             total_pages_merged = 0
+            # Document.insert_pdf() copies pages but NOT the outline, and
+            # nothing here ever called set_toc(), so every bookmark in every
+            # input was silently dropped. Accumulate them instead, shifting
+            # each source's page targets by the number of pages already
+            # merged, and write the combined outline once at the end.
+            combined_toc = []
+            bookmarks_dropped = 0
 
             for i, doc in enumerate(input_docs):
                 try:
+                    page_offset = total_pages_merged
+                    for entry in (doc.get_toc() or []):
+                        level, title, page = entry[0], entry[1], entry[2]
+                        if page and page > 0:
+                            combined_toc.append([level, title, page + page_offset])
+                        else:
+                            # A non-positive target means the bookmark points
+                            # at no page (some producers emit -1); it cannot be
+                            # rebased, so count it rather than silently lose it.
+                            bookmarks_dropped += 1
                     merged_doc.insert_pdf(doc)
                     total_pages_merged += len(doc)
                     logger.info(f"Merged document {i + 1}: {len(doc)} pages")
                 except Exception as e:
                     logger.error(f"Failed to merge document {i + 1}: {e}")
+
+            if combined_toc:
+                try:
+                    merged_doc.set_toc(combined_toc)
+                except Exception as e:
+                    # A malformed outline should not cost the caller the merge
+                    # itself, which is the expensive part and already done.
+                    logger.warning(f"Could not write merged bookmarks: {e}")
+                    bookmarks_dropped += len(combined_toc)
+                    combined_toc = []
 
             # Save merged document
             merged_doc.save(str(output_pdf_path))
@@ -153,6 +185,8 @@ class DocumentAssemblyMixin(MCPMixin):
                 "merge_summary": {
                     "input_files": len(paths_list),
                     "total_pages_merged": total_pages_merged,
+                    "bookmarks_preserved": len(combined_toc),
+                    "bookmarks_dropped": bookmarks_dropped,
                     "output_size_bytes": output_size,
                     "output_size_mb": round(output_size / (1024 * 1024), 2)
                 },
