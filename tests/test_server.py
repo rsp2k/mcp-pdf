@@ -51,7 +51,7 @@ class TestToolRegistration:
 
     @pytest.fixture
     def tool_names(self, server):
-        return set(asyncio_run(server.mcp.get_tools()))
+        return registered_tool_names(server)
 
     def test_core_tools_are_registered(self, tool_names):
         # A representative slice across mixins rather than an exhaustive list,
@@ -76,15 +76,36 @@ class TestToolRegistration:
 
     def test_no_duplicate_tool_registration(self, server):
         """Two mixins claiming one tool name silently shadows one of them."""
-        names = list(asyncio_run(server.mcp.get_tools()))
+        names = registered_tool_names(server, unique=False)
         assert len(names) == len(set(names))
 
 
-def asyncio_run(coro):
-    """Run a coroutine, tolerating FastMCP APIs that are sync in some versions."""
+def registered_tool_names(server, unique: bool = True):
+    """The names of every tool registered on the server.
+
+    Spans both FastMCP tool-listing APIs deliberately. 4.x replaced
+    ``get_tools()``, which returned a name-keyed dict, with an async
+    ``list_tools()`` returning a ``Sequence[Tool]``. Reading the names
+    through whichever exists means this suite does not pin the project to
+    one FastMCP major, and the failure mode if a third API arrives is an
+    explicit AttributeError here rather than a confusing assertion error
+    in each test that uses it.
+    """
     import asyncio
     import inspect
 
-    if not inspect.isawaitable(coro):
-        return coro
-    return asyncio.run(coro)
+    if hasattr(server.mcp, "list_tools"):          # FastMCP 4.x
+        result = server.mcp.list_tools()
+        tools = asyncio.run(result) if inspect.isawaitable(result) else result
+        names = [t.name for t in tools]
+    elif hasattr(server.mcp, "get_tools"):         # FastMCP 2.x / 3.x
+        result = server.mcp.get_tools()
+        mapping = asyncio.run(result) if inspect.isawaitable(result) else result
+        names = list(mapping)
+    else:
+        raise AttributeError(
+            "FastMCP exposes neither list_tools() nor get_tools(); the "
+            "tool-listing API changed again and this helper needs updating."
+        )
+
+    return set(names) if unique else names

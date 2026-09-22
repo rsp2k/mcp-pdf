@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, List
 import logging
 
 # PDF processing libraries
-import fitz  # PyMuPDF
+import pymupdf
 # Note: reportlab is imported lazily in create_form_pdf (optional dependency)
 
 # Official FastMCP mixin
@@ -63,7 +63,7 @@ class FormManagementMixin(MCPMixin):
             #
             # Detection has three outcomes, and the third one matters: if we
             # could not read the file at all, we must not treat that as "not
-            # XFA". We still try fitz (MuPDF recovers from damage pypdf will
+            # XFA". We still try PyMuPDF (MuPDF recovers from damage pypdf will
             # not), but we carry the detection failure forward so the error
             # path can say the file looks damaged rather than emitting a bare
             # "document closed".
@@ -86,7 +86,7 @@ class FormManagementMixin(MCPMixin):
                     "extraction_time": round(time.time() - start_time, 2),
                 }
 
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
 
             form_fields = []
             total_fields = 0
@@ -223,7 +223,7 @@ class FormManagementMixin(MCPMixin):
                 }
 
             # Open and process the PDF
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             fields_filled = 0
             fields_failed = 0
             failed_fields = []
@@ -255,7 +255,7 @@ class FormManagementMixin(MCPMixin):
             # Save the filled PDF
             if flatten:
                 # Create a flattened version by rendering to new PDF
-                flattened_doc = fitz.open()
+                flattened_doc = pymupdf.open()
                 for page_num in range(len(doc)):
                     page = doc[page_num]
                     pix = page.get_pixmap()
@@ -265,7 +265,7 @@ class FormManagementMixin(MCPMixin):
                 flattened_doc.save(str(output_pdf_path))
                 flattened_doc.close()
             else:
-                doc.save(str(output_pdf_path), incremental=False, encryption=fitz.PDF_ENCRYPT_NONE)
+                doc.save(str(output_pdf_path), incremental=False, encryption=pymupdf.PDF_ENCRYPT_NONE)
 
             doc.close()
 
@@ -473,19 +473,19 @@ class FormManagementMixin(MCPMixin):
         field_type = getattr(widget, 'field_type', 0)
 
         # Field type constants from PyMuPDF
-        if field_type == fitz.PDF_WIDGET_TYPE_BUTTON:
+        if field_type == pymupdf.PDF_WIDGET_TYPE_BUTTON:
             return "button"
-        elif field_type == fitz.PDF_WIDGET_TYPE_CHECKBOX:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_CHECKBOX:
             return "checkbox"
-        elif field_type == fitz.PDF_WIDGET_TYPE_RADIOBUTTON:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_RADIOBUTTON:
             return "radio"
-        elif field_type == fitz.PDF_WIDGET_TYPE_TEXT:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_TEXT:
             return "text"
-        elif field_type == fitz.PDF_WIDGET_TYPE_LISTBOX:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_LISTBOX:
             return "dropdown"
-        elif field_type == fitz.PDF_WIDGET_TYPE_COMBOBOX:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_COMBOBOX:
             return "dropdown"
-        elif field_type == fitz.PDF_WIDGET_TYPE_SIGNATURE:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_SIGNATURE:
             return "signature"
         else:
             return "unknown"
@@ -500,19 +500,19 @@ class FormManagementMixin(MCPMixin):
         """
         field_type = getattr(widget, 'field_type', 0)
 
-        if field_type == fitz.PDF_WIDGET_TYPE_BUTTON:
+        if field_type == pymupdf.PDF_WIDGET_TYPE_BUTTON:
             return "button"
-        elif field_type == fitz.PDF_WIDGET_TYPE_CHECKBOX:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_CHECKBOX:
             return "checkbox"
-        elif field_type == fitz.PDF_WIDGET_TYPE_RADIOBUTTON:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_RADIOBUTTON:
             return "radio"
-        elif field_type == fitz.PDF_WIDGET_TYPE_TEXT:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_TEXT:
             return "text"
-        elif field_type == fitz.PDF_WIDGET_TYPE_LISTBOX:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_LISTBOX:
             return "listbox"
-        elif field_type == fitz.PDF_WIDGET_TYPE_COMBOBOX:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_COMBOBOX:
             return "combobox"
-        elif field_type == fitz.PDF_WIDGET_TYPE_SIGNATURE:
+        elif field_type == pymupdf.PDF_WIDGET_TYPE_SIGNATURE:
             return "signature"
         else:
             return "unknown"

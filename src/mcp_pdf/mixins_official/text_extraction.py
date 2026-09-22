@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional, List
 import logging
 
 # PDF processing libraries
-import fitz  # PyMuPDF
+import pymupdf
 import pytesseract
 from PIL import Image
 import io
@@ -81,7 +81,7 @@ class TextExtractionMixin(MCPMixin):
             parsed_pages = self._parse_pages_parameter(pages)
 
             # Open and analyze document
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             total_pages = len(doc)
 
             # Determine pages to process
@@ -235,7 +235,7 @@ class TextExtractionMixin(MCPMixin):
             path = await validate_pdf_path(pdf_path)
             parsed_pages = self._parse_pages_parameter(pages)
 
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             total_pages = len(doc)
 
             pages_to_process = parsed_pages if parsed_pages else list(range(total_pages))
@@ -257,7 +257,7 @@ class TextExtractionMixin(MCPMixin):
                     page = doc[page_num]
 
                     # Convert page to image
-                    mat = fitz.Matrix(dpi/72, dpi/72)
+                    mat = pymupdf.Matrix(dpi/72, dpi/72)
                     pix = page.get_pixmap(matrix=mat)
                     img_data = pix.tobytes("png")
                     image = Image.open(io.BytesIO(img_data))
@@ -382,7 +382,7 @@ class TextExtractionMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
 
             total_pages = len(doc)
             sample_size = min(5, total_pages)  # Check first 5 pages for performance
@@ -408,7 +408,7 @@ class TextExtractionMixin(MCPMixin):
                 for img in images:
                     try:
                         xref = img[0]
-                        pix = fitz.Pixmap(doc, xref)
+                        pix = pymupdf.Pixmap(doc, xref)
                         image_area = pix.width * pix.height
                         total_image_area += image_area
                         pix = None

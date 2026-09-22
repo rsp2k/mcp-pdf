@@ -8,7 +8,7 @@ from typing import Dict, Any
 import logging
 
 # PDF processing libraries
-import fitz  # PyMuPDF
+import pymupdf
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -45,7 +45,7 @@ class SecurityAnalysisMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
 
             # Basic security information
             is_encrypted = doc.needs_pass
@@ -55,14 +55,14 @@ class SecurityAnalysisMixin(MCPMixin):
             # Permission analysis
             permissions = doc.permissions
             permission_details = {
-                "print_allowed": bool(permissions & fitz.PDF_PERM_PRINT),
-                "copy_allowed": bool(permissions & fitz.PDF_PERM_COPY),
-                "modify_allowed": bool(permissions & fitz.PDF_PERM_MODIFY),
-                "annotate_allowed": bool(permissions & fitz.PDF_PERM_ANNOTATE),
-                "form_fill_allowed": bool(permissions & fitz.PDF_PERM_FORM),
-                "extract_allowed": bool(permissions & fitz.PDF_PERM_ACCESSIBILITY),
-                "assemble_allowed": bool(permissions & fitz.PDF_PERM_ASSEMBLE),
-                "print_high_quality_allowed": bool(permissions & fitz.PDF_PERM_PRINT_HQ)
+                "print_allowed": bool(permissions & pymupdf.PDF_PERM_PRINT),
+                "copy_allowed": bool(permissions & pymupdf.PDF_PERM_COPY),
+                "modify_allowed": bool(permissions & pymupdf.PDF_PERM_MODIFY),
+                "annotate_allowed": bool(permissions & pymupdf.PDF_PERM_ANNOTATE),
+                "form_fill_allowed": bool(permissions & pymupdf.PDF_PERM_FORM),
+                "extract_allowed": bool(permissions & pymupdf.PDF_PERM_ACCESSIBILITY),
+                "assemble_allowed": bool(permissions & pymupdf.PDF_PERM_ASSEMBLE),
+                "print_high_quality_allowed": bool(permissions & pymupdf.PDF_PERM_PRINT_HQ)
             }
 
             # Security warnings and recommendations
@@ -220,7 +220,7 @@ class SecurityAnalysisMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             total_pages = len(doc)
 
             watermark_analysis = []
@@ -264,7 +264,7 @@ class SecurityAnalysisMixin(MCPMixin):
                     for img_index, img in enumerate(images):
                         try:
                             xref = img[0]
-                            pix = fitz.Pixmap(doc, xref)
+                            pix = pymupdf.Pixmap(doc, xref)
 
                             # Check if image is likely a watermark (small or semi-transparent)
                             if pix.width < 200 or pix.height < 200:

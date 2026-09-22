@@ -1,6 +1,6 @@
 [project]
 name = "mcp-pdf"
-version = "2026.09.21"
+version = "2026.09.21.1"
 description = "Secure FastMCP server for comprehensive PDF processing - text extraction, OCR, table extraction, forms, annotations, and more"
 authors = [{name = "Ryan Malloy", email = "ryan@supported.systems"}]
 readme = "README.md"
@@ -30,11 +30,15 @@ classifiers = [
     "Topic :: Office/Business",
 ]
 dependencies = [
-    "fastmcp>=0.1.0",
+    # >=0.1.0 was a fiction: this package imports fastmcp.contrib.mcp_mixin,
+    # which does not exist before 2.x, so a resolver could legally pick a
+    # version where the server cannot import at all. 2.11.2 and 4.0.5 are both
+    # verified; the tool-listing API differs between them and tests span both.
+    "fastmcp>=2.11.2",
     "httpx>=0.25.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
-    "PyMuPDF>=1.23.0",
+    "PyMuPDF>=1.24.3",  # 1.24.3 introduced the pymupdf module name
     "pdfplumber>=0.10.0",
     "pytesseract>=0.3.10",
     "pdf2image>=1.16.0",

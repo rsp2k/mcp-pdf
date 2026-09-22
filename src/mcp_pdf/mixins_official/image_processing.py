@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional, List
 import logging
 
 # PDF and image processing libraries
-import fitz  # PyMuPDF
+import pymupdf
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -78,7 +78,7 @@ class ImageProcessingMixin(MCPMixin):
             parsed_pages = parse_pages_parameter(pages)
 
             # Open PDF document
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             total_pages = len(doc)
 
             # Determine pages to process
@@ -109,7 +109,7 @@ class ImageProcessingMixin(MCPMixin):
                         try:
                             # Get image data
                             xref = img[0]
-                            pix = fitz.Pixmap(doc, xref)
+                            pix = pymupdf.Pixmap(doc, xref)
 
                             # Check image dimensions
                             if pix.width < min_width or pix.height < min_height:
@@ -121,7 +121,7 @@ class ImageProcessingMixin(MCPMixin):
                             if pix.n - pix.alpha < 4:  # GRAY or RGB
                                 pass
                             else:  # CMYK: convert to RGB first
-                                pix = fitz.Pixmap(fitz.csRGB, pix)
+                                pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
 
                             # Generate filename
                             base_name = input_pdf_path.stem
@@ -285,7 +285,7 @@ class ImageProcessingMixin(MCPMixin):
             parsed_pages = parse_pages_parameter(pages)
 
             # Open PDF document
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             total_pages = len(doc)
 
             # Determine pages to process
@@ -350,7 +350,7 @@ class ImageProcessingMixin(MCPMixin):
                             try:
                                 alt_text = f"Image {img_index + 1} from page {page_num + 1}"
                                 xref = img[0]
-                                pix = fitz.Pixmap(doc, xref)
+                                pix = pymupdf.Pixmap(doc, xref)
 
                                 if pix.width < min_width or pix.height < min_height:
                                     images_skipped += 1
@@ -359,7 +359,7 @@ class ImageProcessingMixin(MCPMixin):
 
                                 # Convert CMYK to RGB if necessary
                                 if pix.n - pix.alpha >= 4:
-                                    pix = fitz.Pixmap(fitz.csRGB, pix)
+                                    pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
 
                                 base_name = input_pdf_path.stem
                                 filename = f"{base_name}_page_{page_num + 1}_img_{img_index + 1}.{image_format}"
@@ -633,7 +633,7 @@ class ImageProcessingMixin(MCPMixin):
             return True
         for d in drawings:
             items = d.get("items", [])
-            rect = d.get("rect", fitz.Rect(0, 0, 0, 0))
+            rect = d.get("rect", pymupdf.Rect(0, 0, 0, 0))
             if len(items) > 20 and (rect.width > 200 or rect.height > 150):
                 return True
         return False
@@ -701,7 +701,7 @@ class ImageProcessingMixin(MCPMixin):
                 }
 
             # Open PDF document
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             total_pages = len(doc)
 
             # Determine pages to process

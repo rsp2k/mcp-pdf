@@ -9,7 +9,7 @@ from typing import Dict, Any
 import logging
 
 # PDF processing libraries
-import fitz  # PyMuPDF
+import pymupdf
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -77,7 +77,7 @@ class DocumentAssemblyMixin(MCPMixin):
             for i, pdf_path in enumerate(paths_list):
                 try:
                     validated_path = await validate_pdf_path(pdf_path)
-                    doc = fitz.open(str(validated_path))
+                    doc = pymupdf.open(str(validated_path))
                     input_docs.append(doc)
 
                     file_info.append({
@@ -97,7 +97,7 @@ class DocumentAssemblyMixin(MCPMixin):
                     }
 
             # Create merged document
-            merged_doc = fitz.open()
+            merged_doc = pymupdf.open()
             total_pages_merged = 0
 
             for i, doc in enumerate(input_docs):
@@ -166,7 +166,7 @@ class DocumentAssemblyMixin(MCPMixin):
         try:
             # Validate input path
             input_pdf_path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             total_pages = len(doc)
 
             if total_pages <= 1:
@@ -186,7 +186,7 @@ class DocumentAssemblyMixin(MCPMixin):
                 for page_num in range(total_pages):
                     output_path = base_path / f"{base_name}_page_{page_num + 1}.pdf"
 
-                    page_doc = fitz.open()
+                    page_doc = pymupdf.open()
                     page_doc.insert_pdf(doc, from_page=page_num, to_page=page_num)
                     page_doc.save(str(output_path))
                     page_doc.close()
@@ -229,7 +229,7 @@ class DocumentAssemblyMixin(MCPMixin):
 
                         output_path = base_path / f"{base_name}_{clean_title}.pdf"
 
-                        split_doc = fitz.open()
+                        split_doc = pymupdf.open()
                         split_doc.insert_pdf(doc, from_page=start_page, to_page=end_page)
                         split_doc.save(str(output_path))
                         split_doc.close()
@@ -253,7 +253,7 @@ class DocumentAssemblyMixin(MCPMixin):
 
                     output_path = base_path / f"{base_name}_pages_{start_page + 1}-{end_page + 1}.pdf"
 
-                    chunk_doc = fitz.open()
+                    chunk_doc = pymupdf.open()
                     chunk_doc.insert_pdf(doc, from_page=start_page, to_page=end_page)
                     chunk_doc.save(str(output_path))
                     chunk_doc.close()
@@ -341,7 +341,7 @@ class DocumentAssemblyMixin(MCPMixin):
                 }
 
             # Open input document
-            input_doc = fitz.open(str(input_pdf_path))
+            input_doc = pymupdf.open(str(input_pdf_path))
             total_pages = len(input_doc)
 
             # Validate page numbers (convert to 0-based)
@@ -367,7 +367,7 @@ class DocumentAssemblyMixin(MCPMixin):
                 }
 
             # Create reordered document
-            output_doc = fitz.open()
+            output_doc = pymupdf.open()
 
             for page_index in valid_pages:
                 try:

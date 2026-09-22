@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional
 import logging
 
 # PDF processing libraries
-import fitz  # PyMuPDF
+import pymupdf
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -57,8 +57,8 @@ class PDFUtilitiesMixin(MCPMixin):
             path1 = await validate_pdf_path(pdf_path1)
             path2 = await validate_pdf_path(pdf_path2)
 
-            doc1 = fitz.open(str(path1))
-            doc2 = fitz.open(str(path2))
+            doc1 = pymupdf.open(str(path1))
+            doc2 = pymupdf.open(str(path2))
 
             comparison_results = {}
 
@@ -199,7 +199,7 @@ class PDFUtilitiesMixin(MCPMixin):
             # Generate optimized filename
             optimized_path = path.parent / f"{path.stem}_optimized.pdf"
 
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             original_size = path.stat().st_size
 
             # Apply optimization based on level
@@ -276,7 +276,7 @@ class PDFUtilitiesMixin(MCPMixin):
 
             # Attempt to open and repair the PDF
             try:
-                doc = fitz.open(str(path))
+                doc = pymupdf.open(str(path))
 
                 # Check if document can be read
                 total_pages = len(doc)
@@ -393,7 +393,7 @@ class PDFUtilitiesMixin(MCPMixin):
             path = await validate_pdf_path(pdf_path)
             output_path = path.parent / output_filename
 
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             total_pages = len(doc)
 
             # Parse pages parameter
@@ -503,7 +503,7 @@ class PDFUtilitiesMixin(MCPMixin):
                     "Reader can render the actual form."
                 )
 
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             total_pages = len(doc)
 
             # Parse pages parameter
@@ -528,7 +528,7 @@ class PDFUtilitiesMixin(MCPMixin):
                     page = doc[page_num]
 
                     # Create image from page
-                    mat = fitz.Matrix(dpi/72, dpi/72)
+                    mat = pymupdf.Matrix(dpi/72, dpi/72)
                     pix = page.get_pixmap(matrix=mat)
 
                     # Generate filename

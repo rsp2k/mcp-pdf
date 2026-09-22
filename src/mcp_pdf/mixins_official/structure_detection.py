@@ -14,7 +14,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 
-import fitz  # PyMuPDF
+import pymupdf
 
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
 
@@ -108,7 +108,7 @@ class StructureDetectionMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             total_pages = len(doc)
 
             # Determine which pages to process
@@ -306,7 +306,7 @@ class StructureDetectionMixin(MCPMixin):
     # ------------------------------------------------------------------
 
     def _detect_by_bookmarks(
-        self, doc: fitz.Document
+        self, doc: pymupdf.Document
     ) -> List[Dict[str, Any]]:
         """Extract boundaries from PDF bookmarks / table of contents."""
         toc = doc.get_toc()
@@ -319,7 +319,7 @@ class StructureDetectionMixin(MCPMixin):
                 {
                     "title": title_clean,
                     "level": level,
-                    "page": page_num,  # 1-based from fitz
+                    "page": page_num,  # 1-based from PyMuPDF
                     "confidence": 0.95,
                     "detection_method": "bookmarks",
                     "_sort_y": 0,
@@ -329,7 +329,7 @@ class StructureDetectionMixin(MCPMixin):
 
     def _detect_by_fonts(
         self,
-        doc: fitz.Document,
+        doc: pymupdf.Document,
         pages_to_process: List[int],
         max_levels: int,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[int, Dict[str, Any]]]:
@@ -484,7 +484,7 @@ class StructureDetectionMixin(MCPMixin):
         return deduped, body_font_info, heading_font_map
 
     def _detect_by_numbering(
-        self, doc: fitz.Document, pages_to_process: List[int]
+        self, doc: pymupdf.Document, pages_to_process: List[int]
     ) -> List[Dict[str, Any]]:
         """Detect headings using built-in numbering/chapter patterns."""
         boundaries: List[Dict[str, Any]] = []
@@ -535,7 +535,7 @@ class StructureDetectionMixin(MCPMixin):
 
     def _detect_by_pattern(
         self,
-        doc: fitz.Document,
+        doc: pymupdf.Document,
         pages_to_process: List[int],
         pattern: str,
     ) -> List[Dict[str, Any]]:
@@ -833,7 +833,7 @@ class StructureDetectionMixin(MCPMixin):
                 }
 
             # Get total page count
-            source_doc = fitz.open(str(path))
+            source_doc = pymupdf.open(str(path))
             total_pages = len(source_doc)
 
             # Step 3: Compute page ranges from adjacent boundaries
@@ -854,7 +854,7 @@ class StructureDetectionMixin(MCPMixin):
 
                 # Step 4a: Create split PDF
                 section_pdf_path = section_dir / f"{clean_title}.pdf"
-                new_doc = fitz.open()
+                new_doc = pymupdf.open()
                 new_doc.insert_pdf(
                     source_doc,
                     from_page=page_start - 1,  # convert to 0-based
@@ -977,7 +977,7 @@ class StructureDetectionMixin(MCPMixin):
 
             # Validate the source PDF once
             path = await validate_pdf_path(pdf_path)
-            source_doc = fitz.open(str(path))
+            source_doc = pymupdf.open(str(path))
             total_pages = len(source_doc)
 
             results = []
@@ -1007,7 +1007,7 @@ class StructureDetectionMixin(MCPMixin):
                     # Create split PDF
                     clean_name = self._sanitize_dirname(section_name)
                     section_pdf_path = out_dir / f"{clean_name}.pdf"
-                    new_doc = fitz.open()
+                    new_doc = pymupdf.open()
                     new_doc.insert_pdf(
                         source_doc,
                         from_page=page_start - 1,  # convert to 0-based

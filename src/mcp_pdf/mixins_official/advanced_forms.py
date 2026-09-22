@@ -9,7 +9,7 @@ from typing import Dict, Any
 import logging
 
 # PDF processing libraries
-import fitz  # PyMuPDF
+import pymupdf
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -67,7 +67,7 @@ class AdvancedFormsMixin(MCPMixin):
                 }
 
             # Open existing PDF
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             fields_added = 0
 
             for field_def in field_definitions:
@@ -87,19 +87,19 @@ class AdvancedFormsMixin(MCPMixin):
                     height = field_def.get("height", 20)
 
                     # Create field rectangle
-                    field_rect = fitz.Rect(x, y, x + width, y + height)
+                    field_rect = pymupdf.Rect(x, y, x + width, y + height)
 
                     if field_type == "text":
-                        widget = page.add_widget(fitz.Widget())
+                        widget = page.add_widget(pymupdf.Widget())
                         widget.field_name = field_name
-                        widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+                        widget.field_type = pymupdf.PDF_WIDGET_TYPE_TEXT
                         widget.rect = field_rect
                         widget.update()
 
                     elif field_type == "checkbox":
-                        widget = page.add_widget(fitz.Widget())
+                        widget = page.add_widget(pymupdf.Widget())
                         widget.field_name = field_name
-                        widget.field_type = fitz.PDF_WIDGET_TYPE_CHECKBOX
+                        widget.field_type = pymupdf.PDF_WIDGET_TYPE_CHECKBOX
                         widget.rect = field_rect
                         widget.update()
 
@@ -184,7 +184,7 @@ class AdvancedFormsMixin(MCPMixin):
                 }
 
             # Open PDF
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             page_num = page - 1  # Convert to 0-based
 
             if page_num < 0 or page_num >= len(doc):
@@ -202,17 +202,17 @@ class AdvancedFormsMixin(MCPMixin):
             for i, option_label in enumerate(option_list):
                 try:
                     button_y = y + (i * spacing)
-                    button_rect = fitz.Rect(x, button_y, x + 15, button_y + 15)
+                    button_rect = pymupdf.Rect(x, button_y, x + 15, button_y + 15)
 
                     # Create radio button widget
-                    widget = pdf_page.add_widget(fitz.Widget())
+                    widget = pdf_page.add_widget(pymupdf.Widget())
                     widget.field_name = f"{group_name}_{i}"
-                    widget.field_type = fitz.PDF_WIDGET_TYPE_RADIOBUTTON
+                    widget.field_type = pymupdf.PDF_WIDGET_TYPE_RADIOBUTTON
                     widget.rect = button_rect
                     widget.update()
 
                     # Add label text next to radio button
-                    text_point = fitz.Point(x + 20, button_y + 10)
+                    text_point = pymupdf.Point(x + 20, button_y + 10)
                     pdf_page.insert_text(text_point, option_label, fontsize=10)
 
                     buttons_added += 1
@@ -294,7 +294,7 @@ class AdvancedFormsMixin(MCPMixin):
             output_pdf_path = validate_output_path(output_path)
 
             # Open PDF
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             page_num = page - 1  # Convert to 0-based
 
             if page_num < 0 or page_num >= len(doc):
@@ -309,23 +309,23 @@ class AdvancedFormsMixin(MCPMixin):
 
             # Add label if provided
             if label:
-                label_point = fitz.Point(x, y - 15)
+                label_point = pymupdf.Point(x, y - 15)
                 pdf_page.insert_text(label_point, label, fontsize=10, color=(0, 0, 0))
 
             # Create textarea field rectangle
-            field_rect = fitz.Rect(x, y, x + width, y + height)
+            field_rect = pymupdf.Rect(x, y, x + width, y + height)
 
             # Add textarea widget
-            widget = pdf_page.add_widget(fitz.Widget())
+            widget = pdf_page.add_widget(pymupdf.Widget())
             widget.field_name = field_name
-            widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+            widget.field_type = pymupdf.PDF_WIDGET_TYPE_TEXT
             widget.rect = field_rect
             widget.update()
 
             # Add word count indicator if requested
             if show_word_count:
                 count_text = f"Max words: {word_limit}"
-                count_point = fitz.Point(x + width - 100, y + height + 15)
+                count_point = pymupdf.Point(x + width - 100, y + height + 15)
                 pdf_page.insert_text(count_point, count_text, fontsize=8, color=(0.5, 0.5, 0.5))
 
             # Save modified PDF
@@ -403,7 +403,7 @@ class AdvancedFormsMixin(MCPMixin):
             output_pdf_path = validate_output_path(output_path)
 
             # Open PDF
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             page_num = page - 1  # Convert to 0-based
 
             if page_num < 0 or page_num >= len(doc):
@@ -418,23 +418,23 @@ class AdvancedFormsMixin(MCPMixin):
 
             # Add label if provided
             if label:
-                label_point = fitz.Point(x, y - 15)
+                label_point = pymupdf.Point(x, y - 15)
                 pdf_page.insert_text(label_point, label, fontsize=10, color=(0, 0, 0))
 
             # Create date field rectangle
-            field_rect = fitz.Rect(x, y, x + width, y + height)
+            field_rect = pymupdf.Rect(x, y, x + width, y + height)
 
             # Add date input widget
-            widget = pdf_page.add_widget(fitz.Widget())
+            widget = pdf_page.add_widget(pymupdf.Widget())
             widget.field_name = field_name
-            widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+            widget.field_type = pymupdf.PDF_WIDGET_TYPE_TEXT
             widget.rect = field_rect
             widget.update()
 
             # Add format hint if requested
             if show_format_hint:
                 hint_text = f"Format: {date_format}"
-                hint_point = fitz.Point(x + width + 10, y + height/2)
+                hint_point = pymupdf.Point(x + width + 10, y + height/2)
                 pdf_page.insert_text(hint_point, hint_text, fontsize=8, color=(0.5, 0.5, 0.5))
 
             # Save modified PDF

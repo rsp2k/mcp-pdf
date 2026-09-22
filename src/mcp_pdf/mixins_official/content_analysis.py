@@ -10,7 +10,7 @@ import re
 from collections import Counter
 
 # PDF processing libraries
-import fitz  # PyMuPDF
+import pymupdf
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -48,7 +48,7 @@ class ContentAnalysisMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             total_pages = len(doc)
 
             # Extract text from sample pages for analysis
@@ -209,7 +209,7 @@ class ContentAnalysisMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             total_pages = len(doc)
 
             # Parse pages parameter
@@ -353,7 +353,7 @@ class ContentAnalysisMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             total_pages = len(doc)
 
             # Parse pages parameter
@@ -417,7 +417,7 @@ class ContentAnalysisMixin(MCPMixin):
                     try:
                         # Get image position (approximate)
                         xref = img[0]
-                        pix = fitz.Pixmap(doc, xref)
+                        pix = pymupdf.Pixmap(doc, xref)
                         img_area = pix.width * pix.height
                         total_image_area += img_area
 

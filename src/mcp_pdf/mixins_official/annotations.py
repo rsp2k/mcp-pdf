@@ -9,7 +9,7 @@ from typing import Dict, Any
 import logging
 
 # PDF processing libraries
-import fitz  # PyMuPDF
+import pymupdf
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -74,7 +74,7 @@ class AnnotationsMixin(MCPMixin):
                 }
 
             # Open PDF document
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             total_pages = len(doc)
             notes_added = 0
             notes_failed = 0
@@ -100,7 +100,7 @@ class AnnotationsMixin(MCPMixin):
                     author = note_def.get("author", "User")
 
                     # Create sticky note annotation
-                    point = fitz.Point(x, y)
+                    point = pymupdf.Point(x, y)
                     text_annot = page.add_text_annot(point, content)
 
                     # Set annotation properties
@@ -186,7 +186,7 @@ class AnnotationsMixin(MCPMixin):
                 }
 
             # Open PDF document
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             total_pages = len(doc)
             highlights_added = 0
             highlights_failed = 0
@@ -229,7 +229,7 @@ class AnnotationsMixin(MCPMixin):
 
                     elif all(k in highlight_def for k in ["x1", "y1", "x2", "y2"]):
                         # Manual rectangle highlighting
-                        rect = fitz.Rect(
+                        rect = pymupdf.Rect(
                             highlight_def["x1"],
                             highlight_def["y1"],
                             highlight_def["x2"],
@@ -334,7 +334,7 @@ class AnnotationsMixin(MCPMixin):
                 }
 
             # Open PDF document
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             total_pages = len(doc)
             stamps_added = 0
             stamps_failed = 0
@@ -379,7 +379,7 @@ class AnnotationsMixin(MCPMixin):
                     }
 
                     # Create stamp rectangle
-                    stamp_rect = fitz.Rect(x, y, x + width, y + height)
+                    stamp_rect = pymupdf.Rect(x, y, x + width, y + height)
 
                     # Add rectangular annotation for stamp background
                     stamp_annot = page.add_rect_annot(stamp_rect)
@@ -389,7 +389,7 @@ class AnnotationsMixin(MCPMixin):
                     stamp_annot.update()
 
                     # Add text on top of the stamp
-                    text_point = fitz.Point(x + width/2, y + height/2)
+                    text_point = pymupdf.Point(x + width/2, y + height/2)
                     text_annot = page.add_text_annot(text_point, stamp_type.upper())
                     text_annot.set_info(content=stamp_type.upper())
                     text_annot.update()
@@ -467,7 +467,7 @@ class AnnotationsMixin(MCPMixin):
         try:
             # Validate path
             input_pdf_path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             total_pages = len(doc)
 
             all_annotations = []

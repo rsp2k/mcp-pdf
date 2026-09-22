@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional
 import logging
 
 # PDF processing libraries
-import fitz  # PyMuPDF
+import pymupdf
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -58,7 +58,7 @@ class MiscToolsMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             total_pages = len(doc)
 
             # Parse pages parameter
@@ -90,7 +90,7 @@ class MiscToolsMixin(MCPMixin):
                         }
 
                         # Determine link type and extract URL
-                        if link["kind"] == fitz.LINK_URI:
+                        if link["kind"] == pymupdf.LINK_URI:
                             uri = link.get("uri", "")
                             link_data["type"] = "external"
                             link_data["url"] = uri
@@ -105,7 +105,7 @@ class MiscToolsMixin(MCPMixin):
                             else:
                                 continue  # Skip if type not requested
 
-                        elif link["kind"] == fitz.LINK_GOTO:
+                        elif link["kind"] == pymupdf.LINK_GOTO:
                             if include_internal:
                                 link_data["type"] = "internal"
                                 link_data["target_page"] = link.get("page", 0) + 1
@@ -207,7 +207,7 @@ class MiscToolsMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
             total_pages = len(doc)
 
             # Parse pages parameter
@@ -231,7 +231,7 @@ class MiscToolsMixin(MCPMixin):
                     for img_index, img in enumerate(images):
                         try:
                             xref = img[0]
-                            pix = fitz.Pixmap(doc, xref)
+                            pix = pymupdf.Pixmap(doc, xref)
 
                             if pix.width >= min_size or pix.height >= min_size:
                                 # Heuristic: larger images are more likely to be charts
@@ -262,7 +262,7 @@ class MiscToolsMixin(MCPMixin):
                             items = drawing.get("items", [])
                             if len(items) > 10:  # Complex drawings might be charts
                                 # Get bounding box
-                                rect = drawing.get("rect", fitz.Rect(0, 0, 0, 0))
+                                rect = drawing.get("rect", pymupdf.Rect(0, 0, 0, 0))
                                 width = rect.width
                                 height = rect.height
 
@@ -378,7 +378,7 @@ class MiscToolsMixin(MCPMixin):
                 }
 
             # Open PDF
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             rules_applied = 0
             fields_processed = 0
 
@@ -498,7 +498,7 @@ class MiscToolsMixin(MCPMixin):
             for i, pdf_path in enumerate(paths_list):
                 try:
                     validated_path = await validate_pdf_path(pdf_path)
-                    doc = fitz.open(str(validated_path))
+                    doc = pymupdf.open(str(validated_path))
                     input_docs.append(doc)
 
                     doc_pages = len(doc)
@@ -522,7 +522,7 @@ class MiscToolsMixin(MCPMixin):
                     }
 
             # Create merged document
-            merged_doc = fitz.open()
+            merged_doc = pymupdf.open()
             current_page = 0
             merged_toc = []
 
@@ -645,7 +645,7 @@ class MiscToolsMixin(MCPMixin):
                     "split_time": round(time.time() - start_time, 2)
                 }
 
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             total_pages = len(doc)
             split_files = []
 
@@ -670,7 +670,7 @@ class MiscToolsMixin(MCPMixin):
 
                     if start_page <= end_page:
                         # Create split document
-                        split_doc = fitz.open()
+                        split_doc = pymupdf.open()
                         split_doc.insert_pdf(doc, from_page=start_page, to_page=end_page)
 
                         # Generate filename
@@ -759,7 +759,7 @@ class MiscToolsMixin(MCPMixin):
             output_dir = validate_output_path(output_directory)
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            doc = fitz.open(str(input_pdf_path))
+            doc = pymupdf.open(str(input_pdf_path))
             toc = doc.get_toc()
 
             if not toc:
@@ -803,7 +803,7 @@ class MiscToolsMixin(MCPMixin):
                         output_path = output_dir / filename
 
                         # Create split document
-                        split_doc = fitz.open()
+                        split_doc = pymupdf.open()
                         split_doc.insert_pdf(doc, from_page=start_page, to_page=end_page)
                         split_doc.save(str(output_path))
                         split_doc.close()

@@ -8,7 +8,7 @@ from typing import Dict, Any
 import logging
 
 # PDF processing libraries
-import fitz  # PyMuPDF
+import pymupdf
 
 # Official FastMCP mixin
 from fastmcp.contrib.mcp_mixin import MCPMixin, mcp_tool
@@ -46,7 +46,7 @@ class DocumentAnalysisMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
 
             # Extract basic metadata
             metadata = doc.metadata
@@ -83,10 +83,10 @@ class DocumentAnalysisMixin(MCPMixin):
 
             # Get document permissions
             permissions = {
-                "printing": doc.permissions & fitz.PDF_PERM_PRINT != 0,
-                "copying": doc.permissions & fitz.PDF_PERM_COPY != 0,
-                "modification": doc.permissions & fitz.PDF_PERM_MODIFY != 0,
-                "annotation": doc.permissions & fitz.PDF_PERM_ANNOTATE != 0
+                "printing": doc.permissions & pymupdf.PDF_PERM_PRINT != 0,
+                "copying": doc.permissions & pymupdf.PDF_PERM_COPY != 0,
+                "modification": doc.permissions & pymupdf.PDF_PERM_MODIFY != 0,
+                "annotation": doc.permissions & pymupdf.PDF_PERM_ANNOTATE != 0
             }
 
             # Check for encryption
@@ -160,7 +160,7 @@ class DocumentAnalysisMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
 
             # Extract table of contents/bookmarks
             toc = doc.get_toc()
@@ -278,7 +278,7 @@ class DocumentAnalysisMixin(MCPMixin):
 
         try:
             path = await validate_pdf_path(pdf_path)
-            doc = fitz.open(str(path))
+            doc = pymupdf.open(str(path))
 
             health_issues = []
             warnings = []

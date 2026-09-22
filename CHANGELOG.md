@@ -22,6 +22,47 @@ original numbers.
 
 ---
 
+## 2026.09.21.1
+
+Dependency currency, and two declared floors that were fiction.
+
+### Fixed
+
+- **`import fitz` migrated to `import pymupdf`** across all 12 mixins.
+  PyMuPDF renamed its module in 1.24.3 and the `fitz` shim now prints
+  `The 'fitz' API is deprecated and will be removed in future` on import.
+  Every user of `2026.09.21` saw that on server startup. It was invisible
+  during development because `uv.lock` pinned PyMuPDF 1.26.3, whose shim is
+  silent, while fresh installs resolved 1.28.2, whose shim warns. Verified all
+  26 PyMuPDF attributes this package uses resolve identically on both module
+  names before switching.
+
+- **`PyMuPDF>=1.23.0` raised to `>=1.24.3`.** The old floor permitted versions
+  that have no `pymupdf` module at all, so after the rename a resolver landing
+  on 1.23.x would fail at import. Confirmed by inspecting wheel contents: 1.24.2
+  ships only `fitz`, 1.24.3 ships both.
+
+- **`fastmcp>=0.1.0` raised to `>=2.11.2`.** That floor was a fiction. This
+  package imports `fastmcp.contrib.mcp_mixin`, which does not exist before 2.x,
+  so the resolver was free to pick a version where the server could not import.
+
+### Changed
+
+- **FastMCP 2.11.2 to 4.0.5, PyMuPDF 1.26.3 to 1.28.2** in the lockfile. Both
+  were behind what fresh installs actually resolved, which is the skew that hid
+  the deprecation warning. All 54 tools still register and a 12-tool functional
+  pass is clean under 4.0.5.
+
+- `tests/test_server.py` reads tool names through whichever listing API is
+  present. FastMCP 4.x replaced `get_tools()` (a name-keyed dict) with an async
+  `list_tools()` returning `Sequence[Tool]`, so the suite spans both majors
+  rather than pinning the project to one.
+
+- PyMuPDF 1.28.2 also clears the three `SwigPyObject has no __module__`
+  DeprecationWarnings that every test run has been emitting.
+
+---
+
 ## 2026.09.21
 
 First CalVer release. Contains one breaking change and a round of fixes from a
